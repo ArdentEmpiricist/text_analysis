@@ -7,7 +7,7 @@ readme = "README.md"
 homepage = "https://docs.rs/text_analysis/"
 documentation = "https://docs.rs/text_analysis/"
 repository = "https://github.com/LazyEmpiricist/text_analysis"
-keywords = ["statistics", "word-analysis", "text", "parsing", "text-processing", "science"]
+keywords = ["statistics", "word-analysis", "parsing", "text-processing", "science"]
 categories = ["command-line-utilities", "parsing", "text-processing", "science"]
 license = "MIT"
 
