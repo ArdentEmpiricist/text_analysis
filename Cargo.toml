@@ -1,0 +1,20 @@
+[package]
+name = "text_analysis"
+version = "0.1.0"
+authors = ["LazyEmpiricist <35100899+LazyEmpiricist@users.noreply.github.com>"]
+edition = "2018"
+readme = "README.md"
+homepage = "https://docs.rs/text_analysis/"
+documentation = "https://docs.rs/text_analysis/"
+repository = "https://github.com/LazyEmpiricist/text_analysis"
+keywords = ["statistics", "word-analysis", "text", "parsing", "text-processing", "science"]
+categories = ["command-line-utilities", "parsing", "text-processing", "science"]
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = "0.4.11"
+pdf-extract = "0.6.2"
+rayon = "1.3.1"
+
