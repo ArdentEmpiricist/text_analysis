@@ -1,6 +1,6 @@
 [package]
 name = "text_analysis"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["LazyEmpiricist <35100899+LazyEmpiricist@users.noreply.github.com>"]
 edition = "2018"
 description = "Analyze text stored as *.txt or *pdf in chosen directory. Doesn't read files in subdirectories. Counting all words and then searching for every unique word in the vicinity (+-5 words). Stores results in file [date/time]results_word_analysis.txt in given directory."
@@ -11,6 +11,14 @@ repository = "https://github.com/LazyEmpiricist/text_analysis"
 keywords = ["statistics", "word-analysis", "parsing", "text-processing", "science"]
 categories = ["command-line-utilities", "parsing", "text-processing", "science"]
 license = "MIT"
+
+[lib]
+name = "text_analysis"
+path = "src/lib.rs"
+
+[[bin]]
+name = "text_analysis"
+path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -14,6 +14,42 @@ Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/ch
 
 
 ## Example 
+
+```rust
+use text_analysis::{count_words, save_file, sort_map_to_vec, trim_to_words, words_near};
+use std::collections::HashMap;
+
+let content_string: String = "An example phrase including two times the word two".to_string();
+let content_vec: Vec<String> = trim_to_words(content_string).unwrap();
+
+let word_frequency = count_words(&content_vec).unwrap();
+let words_sorted = sort_map_to_vec(word_frequency).unwrap();
+
+
+let mut index_rang: usize = 0;
+let mut words_near_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
+for word in &words_sorted {
+    words_near_map.extend(words_near(&word, index_rang, &content_vec, &words_sorted).unwrap());
+    index_rang += 1;
+    }
+
+let mut result_as_string = String::new();
+
+for word in words_sorted {
+    let (word_only, frequency) = &word;
+    let words_near = &words_near_map[word_only];
+    let combined = format!(
+        "Word: {:?}, Frequency: {:?},\nWords near: {:?} \n\n",
+        word_only,
+        frequency,
+        sort_map_to_vec(words_near.to_owned()).unwrap()
+        );
+    result_as_string.push_str(&combined);
+}
+println!("{:?}", result_as_string);
+
+```
+
 Output for "gender" in Butler, Judith. “Performative Acts and Gender Constitution: An Essay in Phenomenology and Feminist Theory.” Theatre Journal, vol. 40, no. 4, 1988, pp. 519–531:
 
 Word: "gender", Frequency: 123,
