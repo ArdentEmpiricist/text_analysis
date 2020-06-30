@@ -64,9 +64,9 @@ Words near: [("of", 71), ("the", 68), ("is", 57), ("and", 46), ("that", 31), ("a
 ## To do:
 - [x] Read *.txt and *pdf
 - [x] Scan given directory
+- [x] Add more comments
+- [x] Write tests
 - [ ] Show list of read-errors / files couldn't be read
-- [ ] Add more comments
-- [ ] Write tests
 - [ ] Read *odt, *doc and *.docx
 - [ ] Scan subdirectories
 
