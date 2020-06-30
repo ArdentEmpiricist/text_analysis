@@ -9,7 +9,10 @@ Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/ch
 
 **To install**: clone the repository and build from source or use ```cargo install text_analysis```.
 
-**Usage: text_analysis path-to-directory**
+**Usage:**
+```
+text_analysis path/to/directory
+```
 
 
 
