@@ -1,4 +1,7 @@
 # Text_Analysis
+
+![Rust](https://github.com/LazyEmpiricist/text_analysis/workflows/Rust/badge.svg?branch=main)
+
 Analyze text stored as *.txt or *pdf in chosen directory. Doesn't read files in subdirectories.
 Counting all words and then searching for every unique word in the vicinity (+-5 words).
 Stores results in file [date/time]results_word_analysis.txt in given directory.
