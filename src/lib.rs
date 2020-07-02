@@ -49,6 +49,36 @@ use chrono::prelude::*;
 use rayon::prelude::*;
 
 ///Search for words +-5 around given word. Returns result.
+/// # Example
+/// ```
+/// use std::{collections::HashMap, hash::Hash};
+/// use text_analysis::{count_words, sort_map_to_vec, words_near};
+/// fn keys_match<T: Eq + Hash, U, V>(map1: &HashMap<T, U>, map2: &HashMap<T, V>) -> bool {
+///     map1.len() == map2.len() && map1.keys().all(|k| map2.contains_key(k))
+/// }
+/// 
+/// let words = vec![
+///     "one".to_string(),
+///     "two".to_string(),
+///     "three".to_string(),
+///     "four".to_string(),
+///     "four".to_string(),
+///     "five".to_string(),
+/// ];
+/// let word = ("two".to_string(), 2 as u32);
+/// let words_sorted: Vec<(String, u32)> =
+///     sort_map_to_vec(count_words(&words).unwrap()).unwrap();
+/// let index_rang: usize = 1;
+/// let words_near_map = words_near(&word, index_rang, &words, &words_sorted).unwrap();
+/// let mut hashmap_inner = HashMap::new();
+/// hashmap_inner.insert("four".to_string(), 2 as u32);
+/// hashmap_inner.insert("one".to_string(), 1 as u32);
+/// hashmap_inner.insert("three".to_string(), 1 as u32);
+/// hashmap_inner.insert("five".to_string(), 1 as u32);
+/// let mut expected_map = HashMap::new();
+/// expected_map.insert("two".to_string(), hashmap_inner);
+/// assert!(keys_match(&words_near_map, &expected_map));
+/// ```
 pub fn words_near(
     word: &(String, u32),
     index_rang: usize,
@@ -76,6 +106,26 @@ pub fn words_near(
 }
 
 ///Search for all position (usize) of word in given Vector<String>
+/// # Example
+/// ```
+/// #[test]
+/// fn test() {
+/// use std::{collections::HashMap, hash::Hash};
+/// use text_analysis::{positions};
+/// let words = vec![
+///     "one".to_string(),
+///     "two".to_string(),
+///     "three".to_string(),
+///     "four".to_string(),
+///     "four".to_string(),
+///     "five".to_string(),
+/// ];
+/// let word = "four".to_string();
+/// let position = positions(&words, &word);
+/// let expected = vec![3,4];
+/// assert_eq!(position, expected);
+/// }
+/// ```
 fn positions(vector: &Vec<String>, target: &String) -> Vec<usize> {
     let mut res = Vec::new();
     for (index, c) in vector.into_iter().enumerate() {
@@ -111,6 +161,18 @@ pub fn count_words(words: &Vec<String>) -> std::io::Result<HashMap<String, u32>>
 }
 
 ///Sort words in HashMap<Word, Frequency> according to frequency  into Vector. Returns result.
+/// # Example
+/// ```
+/// use text_analysis::sort_map_to_vec;
+/// use std::collections::HashMap;
+/// let mut words_map = HashMap::new();
+/// words_map.insert("one".to_string(), 1 as u32);
+/// words_map.insert("two".to_string(), 2 as u32);
+/// words_map.insert("three".to_string(), 3 as u32);
+/// let vec_sorted = sort_map_to_vec(words_map).unwrap();
+/// let expected = vec![("three".to_string(), 3 as u32), ("two".to_string(), 2 as u32), ("one".to_string(), 1 as u32)];
+/// assert_eq!(vec_sorted, expected);
+/// ```
 pub fn sort_map_to_vec(frequency: HashMap<String, u32>) -> std::io::Result<Vec<(String, u32)>> {
     let mut vec_sorted: Vec<(String, u32)> = frequency.into_par_iter().collect();
     vec_sorted.par_sort_by(|a, b| b.1.cmp(&a.1));
@@ -118,6 +180,17 @@ pub fn sort_map_to_vec(frequency: HashMap<String, u32>) -> std::io::Result<Vec<(
 }
 
 ///Splits content of file into singe words as Vector<String>. Returns result.
+/// # Example
+/// ```
+/// #[test]
+/// fn test() {
+/// use text_analysis::trim_to_words;
+/// let words = "(_test] {test2!=".to_string();
+/// let trimmed = trim_to_words(words).unwrap();
+/// let expected = vec!["test".to_string(), "test2".to_string()];
+/// assert_eq!(trimmed, expected);
+/// }
+/// ```
 pub fn trim_to_words(content: String) -> std::io::Result<Vec<String>> {
     let content: Vec<String> = content
         .to_lowercase()
@@ -136,9 +209,16 @@ pub fn trim_to_words(content: String) -> std::io::Result<Vec<String>> {
 }
 
 ///Get mininum index.
+/// # Example
+/// ```
+///#[test]
+///fn test() {
+///use text_analysis::get_index_min;
 ///let index1 = 5;
 ///let min_index1 = get_index_min(&index1).unwrap();
 ///assert_eq!(min_index1, 0);
+///}
+/// ```
 fn get_index_min(index: &usize) -> std::io::Result<usize> {
     let min = if *index == 4 {
         index - 4
@@ -157,9 +237,16 @@ fn get_index_min(index: &usize) -> std::io::Result<usize> {
 }
 
 ///Get maximum index.
-///let index1 = 5;
-///let max_index1 = get_index_max(&index1, &9).unwrap();
-///assert_eq!(max_index1, 9);
+/// # Example
+/// ```
+/// #[test]
+/// fn test() {
+/// use text_analysis::get_index_max;
+/// let index1 = 5;
+/// let max_index1 = get_index_max(&index1, &9).unwrap();
+/// assert_eq!(max_index1, 9);
+/// }
+/// ```
 fn get_index_max(index: &usize, max_len: &usize) -> std::io::Result<usize> {
     let max = if index + 5 > *max_len {
         *max_len as usize
