@@ -2,19 +2,21 @@
 //! Analyze text stored as *.txt or *pdf in chosen directory. Doesn't read files in subdirectories.
 //! Counting all words and then searching for every unique word in the vicinity (+-5 words).
 //! Stores results in file [date/time]results_word_analysis.txt
-//! ## Usage: ```text_analysis path```
+//! ## Usage: ```text_analysis path/to/directory```
 //! # Example
 //! ```
 //! use text_analysis::{count_words, save_file, sort_map_to_vec, trim_to_words, words_near};
 //! use std::collections::HashMap;
 //!
+//! //Create an example string. Would normally be read from file. Words constisting of just one char will be ingnored.
 //! let content_string: String = "An example phrase including two times the word two".to_string();
 //! let content_vec: Vec<String> = trim_to_words(content_string).unwrap();
 //!
+//! //Count frequency in HashMap and sort HashMap to Vec according to frequency
 //! let word_frequency = count_words(&content_vec).unwrap();
 //! let words_sorted = sort_map_to_vec(word_frequency).unwrap();
 //!
-//!
+//! //Search for words +-5 near each unique word, count them and insert in Hashmap
 //! let mut index_rang: usize = 0;
 //! let mut words_near_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
 //! for word in &words_sorted {
@@ -22,8 +24,10 @@
 //!     index_rang += 1;
 //!     }
 //!
+//! //prepare output as String. Afterwards you may e.g. write this String to a file.
 //! let mut result_as_string = String::new();
 //!
+//! //fill the String with word, frequency, words near 
 //! for word in words_sorted {
 //!     let (word_only, frequency) = &word;
 //!     let words_near = &words_near_map[word_only];
@@ -35,6 +39,8 @@
 //!         );
 //!     result_as_string.push_str(&combined);
 //! }
+//!
+//! //print resulting String
 //! println!("{:?}", result_as_string);
 //!
 //! ```
@@ -53,10 +59,13 @@ use rayon::prelude::*;
 /// ```
 /// use std::{collections::HashMap, hash::Hash};
 /// use text_analysis::{count_words, sort_map_to_vec, words_near};
+///
+/// //function to allow uncomplete comparison of 2 HashMaps
 /// fn keys_match<T: Eq + Hash, U, V>(map1: &HashMap<T, U>, map2: &HashMap<T, V>) -> bool {
 ///     map1.len() == map2.len() && map1.keys().all(|k| map2.contains_key(k))
 /// }
-/// 
+///
+/// //create Vec<Strings>. Would be normally read from file as String and then "trim_to_words(content_of_file_as_string)" to obtain Vec<String> 
 /// let words = vec![
 ///     "one".to_string(),
 ///     "two".to_string(),
@@ -65,17 +74,26 @@ use rayon::prelude::*;
 ///     "four".to_string(),
 ///     "five".to_string(),
 /// ];
+///
+/// //define word we will be searching for other words near
 /// let word = ("two".to_string(), 2 as u32);
+///
+/// //create sorted Vector of words according to their frequency
 /// let words_sorted: Vec<(String, u32)> =
 ///     sort_map_to_vec(count_words(&words).unwrap()).unwrap();
 /// let index_rang: usize = 1;
+///
+/// //do the actual search for words +-5 near the word "two"
 /// let words_near_map = words_near(&word, index_rang, &words, &words_sorted).unwrap();
+///
+/// //create the expected result to compare to words_near_map
 /// let mut hashmap_inner = HashMap::new();
 /// hashmap_inner.insert("four".to_string(), 2 as u32);
 /// hashmap_inner.insert("one".to_string(), 1 as u32);
 /// hashmap_inner.insert("three".to_string(), 1 as u32);
 /// hashmap_inner.insert("five".to_string(), 1 as u32);
 /// let mut expected_map = HashMap::new();
+///
 /// expected_map.insert("two".to_string(), hashmap_inner);
 /// assert!(keys_match(&words_near_map, &expected_map));
 /// ```
