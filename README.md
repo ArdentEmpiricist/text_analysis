@@ -2,8 +2,9 @@
 
 ![Rust](https://github.com/LazyEmpiricist/text_analysis/workflows/Rust/badge.svg?branch=main)
 ![Crates.io](https://img.shields.io/crates/v/text_analysis)
-![Crates.io](https://img.shields.io/crates/l/text_analysis)
 ![Documentation](https://docs.rs/text_analysis/badge.svg)
+![Crates.io](https://img.shields.io/crates/l/text_analysis)
+
 
 Analyze text stored as *.txt or *pdf in chosen directory. Doesn't read files in subdirectories.
 Counting all words and then searching for every unique word in the vicinity (+-5 words).
