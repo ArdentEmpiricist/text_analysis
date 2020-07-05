@@ -12,9 +12,9 @@ Stores results in file [date/time]results_word_analysis.txt in given directory.
 
 Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/chrono) and pdf-extract (https://crates.io/crates/pdf-extract).
 
-**Warning:** Doesn't ouput error if files could not be read and are ignored
+**Warning:** Doesn't ouput error if files could not be read and are subsequently ignored.
 
-**To install**: clone the repository and build from source or use ```cargo install text_analysis```.
+**To install:** clone the repository and build from source or use ```cargo install text_analysis```.
 
 **Usage:**
 ```
