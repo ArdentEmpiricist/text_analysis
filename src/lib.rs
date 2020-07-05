@@ -27,7 +27,7 @@
 //! //prepare output as String. Afterwards you may e.g. write this String to a file.
 //! let mut result_as_string = String::new();
 //!
-//! //fill the String with word, frequency, words near 
+//! //fill the String with word, frequency, words near
 //! for word in words_sorted {
 //!     let (word_only, frequency) = &word;
 //!     let words_near = &words_near_map[word_only];
@@ -65,7 +65,7 @@ use rayon::prelude::*;
 ///     map1.len() == map2.len() && map1.keys().all(|k| map2.contains_key(k))
 /// }
 ///
-/// //create Vec<Strings>. Would be normally read from file as String and then "trim_to_words(content_of_file_as_string)" to obtain Vec<String> 
+/// //create Vec<Strings>. Would be normally read from file as String and then "trim_to_words(content_of_file_as_string)" to obtain Vec<String>
 /// let words = vec![
 ///     "one".to_string(),
 ///     "two".to_string(),

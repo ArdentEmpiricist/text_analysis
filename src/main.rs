@@ -23,30 +23,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let path = PathBuf::from(&args[1]);
     let instant = Instant::now();
-    //let current_dir = env::current_dir()?;
+    //Vec documents will contain filenames of readable files in directory
     let mut documents = Vec::new();
-    // for entry in read_dir(path).unwrap() { //is directory of executable should be analyzed
-    for entry in read_dir(&path).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.is_file()
-            && !path
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .contains("results_word_analysis")
-            && path.extension().and_then(OsStr::to_str) == Some("txt")
-            || path.extension().and_then(OsStr::to_str) == Some("pdf")
-        {
-            documents.push(path);
+    //path_dir is the directory to save results file in.
+    let mut path_dir: PathBuf = PathBuf::new();
+    if path.is_file() {
+        //Ckeck if argument is a file
+        path_dir.push(path.clone().parent().unwrap());
+        documents.push(path.clone())
+    } else if path.is_dir() {
+        //Ckeck if argument is a directory
+        path_dir.push(path.clone());
+        for entry in read_dir(&path).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_file()
+                && !path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .contains("results_word_analysis")
+                && path.extension().and_then(OsStr::to_str) == Some("txt")
+                || path.extension().and_then(OsStr::to_str) == Some("pdf")
+            {
+                documents.push(path);
+            }
         }
+    } else {
+        panic!("Provided argument is neither directory nor file. Please check.")
     }
 
+    //create String to hold all text
     let mut content_string_all = String::new();
 
+    //create channels to receive read String from files
     let (sender, receiver) = sync_channel(32);
 
+    //read each file in threads
     spawn(move || {
         for filename in documents {
             let sender = sender.clone();
@@ -71,14 +85,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    //receive from threads and push to content_string_all
     for text in receiver {
         content_string_all.push_str(&text);
     }
 
+    //Transform String to Vector of each word and trim some chars
     let content_vec: Vec<String> = trim_to_words(content_string_all)?;
 
     println!("Total number of words read: {:?}", content_vec.len());
 
+    //count and sort words according to frequency
     let word_frequency = count_words(&content_vec)?;
     let words_sorted = sort_map_to_vec(word_frequency)?;
 
@@ -90,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         words_len
     );
 
+    //count words near each unique word
     let mut index_rang: usize = 0;
     let mut words_near_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
     for word in &words_sorted {
@@ -112,6 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut to_file = String::new();
 
+    //format result to print to file.
     let mut i = 1 as usize;
     for word in words_sorted {
         println!("Formatting word-analysis n° {:?} of {:?}", i, &words_len);
@@ -127,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    save_file(to_file, path)?;
+    save_file(to_file, path_dir)?;
 
     println!(
         "Finished in {:?}! Please see file for results",
