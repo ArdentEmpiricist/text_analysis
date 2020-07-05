@@ -1,8 +1,8 @@
 //! # Text_Analysis
-//! Analyze text stored as *.txt or *pdf in chosen directory. Doesn't read files in subdirectories.
+//! Analyze text stored as *.txt or *pdf in provided file or directory. Doesn't read files in subdirectories.
 //! Counting all words and then searching for every unique word in the vicinity (+-5 words).
-//! Stores results in file [date/time]results_word_analysis.txt
-//! ## Usage: ```text_analysis path```
+//! Stores results in file [date/time]results_word_analysis.txt in given directory.
+//! ## Usage: ```text_analysis path/to/directory_or_file```
 
 use std::collections::HashMap;
 use std::env;

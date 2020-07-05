@@ -6,7 +6,7 @@
 [![Crates.io](https://img.shields.io/crates/l/text_analysis)](https://github.com/LazyEmpiricist/text_analysis/blob/main/LICENSE)
 
 
-Analyze text stored as *.txt or *pdf in chosen directory. Doesn't read files in subdirectories.
+Analyze text stored as *.txt or *pdf in chosen file or directory. Doesn't read files in subdirectories.
 Counting all words and then searching for every unique word in the vicinity (+-5 words).
 Stores results in file [date/time]results_word_analysis.txt in given directory.
 
@@ -18,7 +18,7 @@ Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/ch
 
 **Usage:**
 ```
-text_analysis path/to/directory
+text_analysis path/to/directory_or_file
 ```
 
 
@@ -73,7 +73,7 @@ Words near: [("of", 71), ("the", 68), ("is", 57), ("and", 46), ("that", 31), ("a
 - [x] Scan given directory
 - [x] Add more comments
 - [x] Write tests
-- [ ] enable single file as argument
+- [x] Enable single file as argument
 - [ ] Show list of read-errors / files couldn't be read
 - [ ] Read *odt, *doc and *.docx
 - [ ] Scan subdirectories
