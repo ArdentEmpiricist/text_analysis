@@ -10,7 +10,7 @@ Analyze text stored as *.txt or *.pdf in chosen file or directory. Doesn't read 
 Counting all words and then searching for every unique word in the vicinity (+-5 words).
 Stores results in file [date/time]results_word_analysis.txt in given directory.
 
-Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/chrono) and pdf-extract (https://crates.io/crates/pdf-extract)
+Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/chrono) and pdf-extract (https://crates.io/crates/pdf-extract).
 
 **Warning:** Doesn't ouput error if files could not be read and are ignored
 
