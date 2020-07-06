@@ -3,7 +3,7 @@ name = "text_analysis"
 version = "0.1.3"
 authors = ["LazyEmpiricist <35100899+LazyEmpiricist@users.noreply.github.com>"]
 edition = "2018"
-description = "Analyze text stored as *.txt or *pdf in chosen file or directory. Doesn't read files in subdirectories. Counting all words and then searching for every unique word in the vicinity (+-5 words). Stores results in file [date/time]results_word_analysis.txt in given directory."
+description = "Analyze text stored as *.txt or *pdf in provided file or directory. Doesn't read files in subdirectories. Counting all words and then searching for every unique word in the vicinity (+-5 words). Stores results in file [date/time]results_word_analysis.txt in given directory."
 readme = "README.md"
 homepage = "https://docs.rs/text_analysis/"
 documentation = "https://docs.rs/text_analysis/"
@@ -23,7 +23,8 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chrono = "0.4.12"
+chrono = "0.4.13"
 pdf-extract = "0.6.2"
 rayon = "1.3.1"
+anyhow = "1.0.31"
 

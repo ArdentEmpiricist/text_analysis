@@ -29,20 +29,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut path_dir: PathBuf = PathBuf::new();
     if path.is_file() {
         //Ckeck if argument is a file
-        path_dir.push(path.clone().parent().unwrap());
+        path_dir.push(
+            path.clone()
+                .parent()
+                .expect("error parsing path for provided single file"),
+        );
         documents.push(path.clone())
     } else if path.is_dir() {
         //Ckeck if argument is a directory
         path_dir.push(path.clone());
-        for entry in read_dir(&path).unwrap() {
-            let entry = entry.unwrap();
+        for entry in read_dir(&path).expect("error parsing 'entry in read_dir(&path)'") {
+            let entry = entry.expect("error unwrapping entry");
             let path = entry.path();
             if path.is_file()
                 && !path
                     .file_name()
                     .unwrap()
                     .to_str()
-                    .unwrap()
+                    .expect("error transforming filename to str")
                     .contains("results_word_analysis")
                 && path.extension().and_then(OsStr::to_str) == Some("txt")
                 || path.extension().and_then(OsStr::to_str) == Some("pdf")
@@ -66,17 +70,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let sender = sender.clone();
             spawn(move || {
                 if filename.extension().and_then(OsStr::to_str) == Some("txt") {
-                    let mut f: File = File::open(filename).unwrap();
+                    let mut f: File = File::open(filename).expect("error opening txt-file");
                     let mut text = String::new();
-                    f.read_to_string(&mut text).unwrap();
+                    f.read_to_string(&mut text).expect("error reading txt-file");
                     if sender.send(text).is_err() {
                         //break;
                     }
                 } else if filename.extension().and_then(OsStr::to_str) == Some("pdf") {
                     let text: String = panic::catch_unwind(|| {
-                        extract_text(filename).unwrap_or_else(|_| "rust_error".to_string())
+                        extract_text(filename).expect("error reading pdf-file")
                     })
-                    .unwrap();
+                    .expect("error catching panic for thread reading pdf-file");
                     if sender.send(text).is_err() {
                         //break;
                     }
