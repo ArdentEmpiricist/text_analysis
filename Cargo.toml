@@ -25,5 +25,5 @@ path = "src/main.rs"
 [dependencies]
 chrono = "0.4.19"
 pdf-extract = "0.6.2"
-rayon = "1.4.1"
+rayon = "1.5.0"
 
