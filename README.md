@@ -6,11 +6,11 @@
 [![Crates.io](https://img.shields.io/crates/l/text_analysis)](https://github.com/LazyEmpiricist/text_analysis/blob/main/LICENSE)
 
 
-Analyze text stored as *.txt or *.pdf in chosen file or directory. Doesn't read files in subdirectories.
+Analyze text stored as *.txt in chosen file or directory. Doesn't read files in subdirectories.
 Counting all words and then searching for every unique word in the vicinity (+-5 words).
 Stores results in file [date/time]results_word_analysis.txt in given directory.
 
-Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/chrono) and pdf-extract (https://crates.io/crates/pdf-extract).
+Uses chrono (https://crates.io/crates/chrono) to track time.
 
 **Warning:** Doesn't ouput error if files could not be read and are subsequently ignored.
 
@@ -20,43 +20,80 @@ Uses rayon (https://crates.io/crates/rayon), chrono (https://crates.io/crates/ch
 ```
 text_analysis path/to/directory_or_file
 ```
-
+**Breaking Change in 0.2:** No longer reads pdfs. Any help to parse *.pdf and *.docx more than welcome.
 
 
 ## Example 
 
 ```rust
-use text_analysis::{count_words, save_file, sort_map_to_vec, trim_to_words, words_near};
+use text_analysis::{count_words, sort_map_to_vec, trim_to_words, words_near};
 use std::collections::HashMap;
 
-let content_string: String = "An example phrase including two times the word two".to_string();
-let content_vec: Vec<String> = trim_to_words(content_string).unwrap();
+use std::time::Instant;
+//start the clock
+let instant = Instant::now();
 
-let word_frequency = count_words(&content_vec).unwrap();
-let words_sorted = sort_map_to_vec(word_frequency).unwrap();
+//create HashMaps to store results
+let mut frequency: HashMap<String, u32> = HashMap::new();
+let mut words_near_vec_map: HashMap<String, Vec<String>> = HashMap::new();
+let mut map_near: HashMap<String, Vec<(String, u32)>> = HashMap::new();
 
+//create example string to parse
+let text: String = "An example phrase including two times the word two".to_string();
+//create Vec with parsed words
+let content_vec: Vec<String> = trim_to_words(text);
+//prepare Vec to store words near each word
+let mut words_near_vec: Vec<String> = Vec::new();
 
-let mut index_rang: usize = 0;
-let mut words_near_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
-for word in &words_sorted {
-    words_near_map.extend(words_near(&word, index_rang, &content_vec, &words_sorted).unwrap());
-    index_rang += 1;
-    }
+//push words to HashMaps
+for (index, word) in content_vec.clone().into_iter().enumerate() {
+    *frequency.entry(word.to_owned()).or_insert(0) += 1;
 
-let mut result_as_string = String::new();
+    let min: usize = get_index_min(&index);
+    let max: usize = get_index_max(&index, &content_vec.len());
 
-for word in words_sorted {
-    let (word_only, frequency) = &word;
-    let words_near = &words_near_map[word_only];
-    let combined = format!(
-        "Word: {:?}, Frequency: {:?},\nWords near: {:?} \n\n",
-        word_only,
-        frequency,
-        sort_map_to_vec(words_near.to_owned()).unwrap()
-        );
-    result_as_string.push_str(&combined);
+    (for (number, value) in content_vec.iter().enumerate().take(max).skip(min) {
+        if number == index {
+            continue;
+        } else {
+            //println!("{:?}", content_vec[i]);
+            words_near_vec.push(value.clone()); //pushes -+5 words to vec
+        }
+    });
+
+    words_near_vec_map
+        .entry(word.to_owned())
+        .or_insert_with(Vec::new)
+        .append(&mut words_near_vec);
 }
-println!("{:?}", result_as_string);
+
+//count Vec with words nears each words
+for (word, words) in words_near_vec_map {
+    let counted_near = sort_map_to_vec(count_words(&words));
+    map_near.entry(word).or_insert(counted_near);
+}
+
+//Sort frequency HashMap into Vec
+let counted = sort_map_to_vec(frequency);
+
+//format output
+let mut to_file = String::new();
+for (word, frequency) in counted {
+    let words_near = &map_near[&word];
+    let combined = format!(
+        "Word: {:?}, Frequency: {:?},\n Words near: {:?}\n\n",
+        word, frequency, words_near
+    );
+    to_file.push_str(&combined);
+}
+
+//print time elapsed and output to stdout
+println!(
+    "Finished in {:?}! Results:\n {}",
+    instant.elapsed(),
+    to_file
+);
+}
 
 ```
 
@@ -69,13 +106,16 @@ Words near: [("of", 71), ("the", 68), ("is", 57), ("and", 46), ("that", 31), ("a
 
 
 ## To do:
-- [x] Read *.txt and *pdf
+- [x] Read *.txt
 - [x] Scan given directory
 - [x] Add more comments
 - [x] Write tests
 - [x] Enable single file as argument
 - [ ] Show list of read-errors / files couldn't be read
+- [ ] Read *pdf
 - [ ] Read *.odt, *.doc and *.docx
 - [ ] Scan subdirectories
+
+**Help needed to implement parsing of *.pdf and *docx files**
 
 **Issues and feedback are highly appreciated.** 

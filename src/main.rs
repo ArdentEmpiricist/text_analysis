@@ -1,43 +1,47 @@
 //! # Text_Analysis
-//! Analyze text stored as *.txt or *pdf in provided file or directory. Doesn't read files in subdirectories.
+//! Analyze text stored as *.txt in provided file or directory. Doesn't read files in subdirectories.
 //! Counting all words and then searching for every unique word in the vicinity (+-5 words).
 //! Stores results in file [date/time]results_word_analysis.txt in given directory.
 //! ## Usage: ```text_analysis path/to/directory_or_file```
 
 use std::collections::HashMap;
-use std::env;
+use std::env::args;
 use std::ffi::OsStr;
-use std::fs::{read_dir, File};
-use std::io::prelude::*;
+use std::fs::read_dir;
+use std::fs::File;
+use std::io::prelude::Read;
 use std::panic;
 use std::path::PathBuf;
-use std::sync::mpsc::sync_channel;
-use std::thread::spawn;
 use std::time::Instant;
 
-use pdf_extract::*;
-
-use text_analysis::{count_words, save_file, sort_map_to_vec, trim_to_words, words_near};
+use text_analysis::{
+    count_words, get_index_max, get_index_min, save_file, sort_map_to_vec, trim_to_words,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-    let path = PathBuf::from(&args[1]);
     let instant = Instant::now();
+
+    //get path or filename from args
+    let path = PathBuf::from(args().nth(1).expect("no file or directory provided"));
+
+    //print path/file provided to stdout
+    println!("path or file: {:?}", path);
+
     //Vec documents will contain filenames of readable files in directory
     let mut documents = Vec::new();
     //path_dir is the directory to save results file in.
     let mut path_dir: PathBuf = PathBuf::new();
+    //Ckeck if argument is a file and push to Vec documents
     if path.is_file() {
-        //Ckeck if argument is a file
         path_dir.push(
-            path.clone()
-                .parent()
+            path.parent()
                 .expect("error parsing path for provided single file"),
         );
-        documents.push(path.clone())
-    } else if path.is_dir() {
+        documents.push(path)
         //Ckeck if argument is a directory
+    } else if path.is_dir() {
         path_dir.push(path.clone());
+        //walk directory and add .txt to Vec documents - TO DO: Add support for pdf and docx files
         for entry in read_dir(&path).expect("error parsing 'entry in read_dir(&path)'") {
             let entry = entry.expect("error unwrapping entry");
             let path = entry.path();
@@ -49,7 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .expect("error transforming filename to str")
                     .contains("results_word_analysis")
                 && path.extension().and_then(OsStr::to_str) == Some("txt")
-                || path.extension().and_then(OsStr::to_str) == Some("pdf")
+                //|| path.extension().and_then(OsStr::to_str) == Some("pdf") //TO DO: Enable pdf
+                //|| path.extension().and_then(OsStr::to_str) == Some("docx") //TO DO: Enable docx
             {
                 documents.push(path);
             }
@@ -57,105 +62,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         panic!("Provided argument is neither directory nor file. Please check.")
     }
+    //prepare Hashmaps to store results
+    let mut frequency: HashMap<String, u32> = HashMap::new();
 
-    //create String to hold all text
-    let mut content_string_all = String::new();
+    let mut words_near_vec_map: HashMap<String, Vec<String>> = HashMap::new();
 
-    //create channels to receive read String from files
-    let (sender, receiver) = sync_channel(32);
+    let mut map_near: HashMap<String, Vec<(String, u32)>> = HashMap::new();
 
-    //read each file in threads
-    spawn(move || {
-        for filename in documents {
-            let sender = sender.clone();
-            spawn(move || {
-                if filename.extension().and_then(OsStr::to_str) == Some("txt") {
-                    let mut f: File = File::open(filename).expect("error opening txt-file");
-                    let mut text = String::new();
-                    f.read_to_string(&mut text).expect("error reading txt-file");
-                    if sender.send(text).is_err() {
-                        //break;
+    //read each file and globally update the HashMap "frequency" (frequency of each word) and HashMap "words_near_vec_map" (with Vec of counted words near each word)
+    for filename in documents {
+        if filename.extension().and_then(OsStr::to_str) == Some("txt") {
+            let mut f: File = File::open(filename).expect("error opening txt-file");
+            let mut text = String::new();
+            f.read_to_string(&mut text).expect("error reading txt-file");
+            let content_vec: Vec<String> = trim_to_words(text);
+            let mut words_near_vec: Vec<String> = Vec::new();
+
+            for (index, word) in content_vec.clone().into_iter().enumerate() {
+                *frequency.entry(word.to_owned()).or_insert(0) += 1;
+
+                let min: usize = get_index_min(&index);
+                let max: usize = get_index_max(&index, &content_vec.len());
+
+                (for (number, value) in content_vec.iter().enumerate().take(max).skip(min) {
+                    if number == index {
+                        continue;
+                    } else {
+                        //println!("{:?}", content_vec[i]);
+                        words_near_vec.push(value.clone()); //pushes -+5 words to vec
                     }
-                } else if filename.extension().and_then(OsStr::to_str) == Some("pdf") {
-                    let text: String = panic::catch_unwind(|| {
-                        extract_text(filename).expect("error reading pdf-file")
-                    })
-                    .expect("error catching panic for thread reading pdf-file");
-                    if sender.send(text).is_err() {
-                        //break;
-                    }
-                }
-            });
+                });
+
+                words_near_vec_map
+                    .entry(word.to_owned())
+                    .or_insert_with(Vec::new)
+                    .append(&mut words_near_vec);
+            }
+        } else if filename.extension().and_then(OsStr::to_str) == Some("pdf") {
+            /* 
+            TO DO: Handle *.pdf files
+             */
+            continue;
+        } else if filename.extension().and_then(OsStr::to_str) == Some("docx") {
+            /* 
+            TO DO: Handle *.docx files
+             */
+            continue;
+        } else {
+            continue;
         }
-    });
-
-    //receive from threads and push to content_string_all
-    for text in receiver {
-        content_string_all.push_str(&text);
     }
 
-    //Transform String to Vector of each word and trim some chars
-    let content_vec: Vec<String> = trim_to_words(content_string_all)?;
-
-    println!("Total number of words read: {:?}", content_vec.len());
-
-    //count and sort words according to frequency
-    let word_frequency = count_words(&content_vec)?;
-    let words_sorted = sort_map_to_vec(word_frequency)?;
-
-    let words_len = words_sorted.len();
-
-    println!(
-        "Counted words in {:?}. Number of unique words: {:?} \n Finding words near:",
-        instant.elapsed(),
-        words_len
-    );
-
-    //count words near each unique word
-    let mut index_rang: usize = 0;
-    let mut words_near_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
-    for word in &words_sorted {
-        println!(
-            "Analyzing nearest words for word n° {:?} of {:?}",
-            index_rang + 1,
-            &words_len
-        );
-        words_near_map.extend(words_near(&word, index_rang, &content_vec, &words_sorted)?);
-
-        index_rang += 1;
+    //count Vec with words nears each words
+    for (word, words) in words_near_vec_map {
+        let counted_near = sort_map_to_vec(count_words(&words));
+        map_near.entry(word).or_insert(counted_near);
     }
-    //println!("Words: {:?}", words_sorted);
-    //println!("Words near: {:?}", words_near_map);
 
-    println!(
-        "Finished analyzing words in {:?}.\nPreparing output:",
-        instant.elapsed()
-    );
+    //Sort frequency HashMap into Vec
+    let counted = sort_map_to_vec(frequency);
 
+    //format output and write to file
     let mut to_file = String::new();
-
-    //format result to print to file.
-    let mut i = 1 as usize;
-    for word in words_sorted {
-        println!("Formatting word-analysis n° {:?} of {:?}", i, &words_len);
-        let (word_only, frequency) = &word;
-        let words_near = &words_near_map[word_only];
+    for (word, frequency) in counted {
+        let words_near = &map_near[&word];
         let combined = format!(
-            "Word: {:?}, Frequency: {:?},\nWords near: {:?} \n\n",
-            word_only,
-            frequency,
-            sort_map_to_vec(words_near.to_owned())?
+            "Word: {:?}, Frequency: {:?},\n Words near: {:?}\n\n",
+            word, frequency, words_near
         );
         to_file.push_str(&combined);
-        i += 1;
     }
 
-    save_file(to_file, path_dir)?;
+    //save results to file in analyzed path, format: ("%Y_%m_%d_%H_%M_%S_results_word_analysis.txt")
+    let filename = save_file(to_file, path_dir)?;
 
     println!(
-        "Finished in {:?}! Please see file for results",
-        instant.elapsed()
+        "Finished in {:?}! Please see file {:?} for results",
+        instant.elapsed(), filename
     );
-
     Ok(())
 }
