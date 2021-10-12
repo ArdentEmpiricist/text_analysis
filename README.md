@@ -116,6 +116,6 @@ Words near: [("of", 71), ("the", 68), ("is", 57), ("and", 46), ("that", 31), ("a
 - [ ] Read *.odt, *.doc and *.docx
 - [ ] Scan subdirectories
 
-**Help needed to implement parsing of *.pdf and *docx files.**
+**Help needed to implement parsing of .pdf and .docx files.**
 
 **Issues and feedback are highly appreciated.** 
