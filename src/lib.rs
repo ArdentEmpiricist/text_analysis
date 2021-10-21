@@ -211,7 +211,6 @@ mod tests {
             if number == index {
                 continue;
             } else {
-                //println!("{:?}", content_vec[i]);
                 words_near_vec.push(value.clone()); //pushes -+5 words to vec
             }
         });
