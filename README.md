@@ -21,7 +21,7 @@ Uses chrono (https://crates.io/crates/chrono) to track time.
 text_analysis path/to/directory_or_file
 ```
 **Breaking Change in 0.2:** No longer reads pdfs. Any help to parse *.pdf and *.docx more than welcome.
-
+**Breaking Change in 0.3:** PDF support is back using the crate "pdf-extract", although reading PDFs is still prone to error (and panics). Any help to improve PDF-support and how to parse *.docx is more than welcome.
 
 ## Example 
 
