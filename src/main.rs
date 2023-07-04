@@ -100,13 +100,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else if filename.extension().and_then(OsStr::to_str) == Some("pdf") {
             /* 
-            TO DO: Handle *.pdf files
-             */
-            continue;
+            PDF support still shows quite some errors and is prone to panic
+            */
+            let bytes = std::fs::read(filename).expect("error opening pdf-file");
+            let text = pdf_extract::extract_text_from_mem(&bytes).expect("error reading pdf-file");
+            let content_vec: Vec<String> = trim_to_words(text);
+            let mut words_near_vec: Vec<String> = Vec::new();
+
+            for (index, word) in content_vec.clone().into_iter().enumerate() {
+                *frequency.entry(word.to_owned()).or_insert(0) += 1;
+
+                let min: usize = get_index_min(&index);
+                let max: usize = get_index_max(&index, &content_vec.len());
+
+                (for (number, value) in content_vec.iter().enumerate().take(max).skip(min) {
+                    if number == index {
+                        continue;
+                    } else {
+                        //println!("{:?}", content_vec[i]);
+                        words_near_vec.push(value.clone()); //pushes -+5 words to vec
+                    }
+                });
+
+                words_near_vec_map
+                    .entry(word.to_owned())
+                    .or_insert_with(Vec::new)
+                    .append(&mut words_near_vec);
+            }
         } else if filename.extension().and_then(OsStr::to_str) == Some("docx") {
             /* 
             TO DO: Handle *.docx files
-             */
+            */
             continue;
         } else {
             continue;
