@@ -12,7 +12,7 @@ Stores results in file [date/time]results_word_analysis.txt in given directory.
 
 Uses chrono (https://crates.io/crates/chrono) to track time.
 
-**Warning:** Doesn't ouput error if files could not be read and are subsequently ignored.
+**Warning:** Doesn't ouput error if files could not be read and errors are subsequently ignored. May panic at (oddly formated) PDF-files.
 
 **To install:** clone the repository and build from source or use ```cargo install text_analysis```.
 
