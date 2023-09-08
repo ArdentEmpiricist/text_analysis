@@ -10,9 +10,9 @@ checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 
 [[package]]
 name = "adobe-cmap-parser"
-version = "0.3.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3aaf5066d68c8ec9656cfd3a96bc9de83d4883f183d6c6b8d742e36a4819dda"
+checksum = "261a937a307ddc70a1605dec925987d7256adb00232161a1855ef9cc820bd8d5"
 dependencies = [
  "pom",
 ]
@@ -303,9 +303,9 @@ checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
 
 [[package]]
 name = "pdf-extract"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fe4955a4d2679126ff634797113e2ec168d3c8a3d76d233e1985f40a1436073"
+checksum = "79315165e61a067770e1c2d51a03a1bd439a4d02d018e0c5ed2f8ebe828d5770"
 dependencies = [
  "adobe-cmap-parser",
  "encoding",
