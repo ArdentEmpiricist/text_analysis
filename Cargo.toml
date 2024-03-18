@@ -1,6 +1,6 @@
 [package]
 name = "text_analysis"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["LazyEmpiricist <35100899+LazyEmpiricist@users.noreply.github.com>"]
 edition = "2021"
 description = "Analyze text stored as *.txt in provided file or directory. Doesn't read files in subdirectories. Counting all words and then searching for every unique word in the vicinity (+-5 words). Stores results in file [date/time]results_word_analysis.txt in given directory."
