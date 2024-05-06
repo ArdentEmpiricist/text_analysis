@@ -310,9 +310,9 @@ checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
 
 [[package]]
 name = "pdf-extract"
-version = "0.7.5"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62ed3fc12e48d18004b44777946b551e57e73471ccc080c35b18bf19e026b543"
+checksum = "d44f5eeaaa9d815affce84b3d26e9686053e554a457c79f0d196bf724e20dbe6"
 dependencies = [
  "adobe-cmap-parser",
  "encoding",
