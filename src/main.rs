@@ -95,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 words_near_vec_map
                     .entry(word.to_owned())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .append(&mut words_near_vec);
             }
         } else if filename.extension().and_then(OsStr::to_str) == Some("pdf") {
@@ -124,7 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 words_near_vec_map
                     .entry(word.to_owned())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .append(&mut words_near_vec);
             }
         } else if filename.extension().and_then(OsStr::to_str) == Some("docx") {

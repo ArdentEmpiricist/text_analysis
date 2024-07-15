@@ -93,14 +93,15 @@ pub fn sort_map_to_vec(
 ///Get mininum index and guarantee that index is alway >=0
 /// # Example
 /// ```
-///#[test]
+///[test];
 ///fn test() {
-///use text_analysiss::get_index_min;
+///use text_analysis::get_index_min;
 ///let index1 = 5;
-///let min_index1 = get_index_min(&index1).unwrap();
+///let min_index1 = get_index_min(&index1);
 ///assert_eq!(min_index1, 0);
-///}
+///};
 /// ```
+
 pub fn get_index_min(index: &usize) -> usize {
     if *index as isize - 5 < 0 {
         //check if index -5 would result in negative number, return 0 in case
@@ -114,17 +115,17 @@ pub fn get_index_min(index: &usize) -> usize {
 ///Get maximum index and garantee that index does not exeed total length of Vec
 /// # Example
 /// ```
-/// #[test]
+/// [test];
 /// fn test() {
 /// use text_analysis::get_index_max;
 /// let index1 = 5;
-/// let max_index1 = get_index_max(&index1, &9).unwrap();
+/// let max_index1 = get_index_max(&index1, &9);
 /// assert_eq!(max_index1, 9);
-/// }
+/// };
 /// ```
 pub fn get_index_max(index: &usize, max_len: &usize) -> usize {
     if index + 5 > *max_len {
-        *max_len as usize
+        *max_len
     } else {
         index + 5
     }
@@ -138,7 +139,7 @@ pub fn save_file(to_file: String, mut path: PathBuf) -> std::io::Result<PathBuf>
         .to_string();
     path.push(new_filename);
 
-    let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
+    let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(&path)?;
 
     file.write_all(to_file.as_bytes())?;
 
@@ -160,9 +161,9 @@ mod tests {
         ];
         let counted = count_words(&words);
         let mut words_map = HashMap::new();
-        words_map.insert("one".to_string(), 1 as u32);
-        words_map.insert("two".to_string(), 2 as u32);
-        words_map.insert("three".to_string(), 3 as u32);
+        words_map.insert("one".to_string(), 1_u32);
+        words_map.insert("two".to_string(), 2_u32);
+        words_map.insert("three".to_string(), 3_u32);
         assert_eq!(counted, words_map);
     }
 
@@ -217,7 +218,7 @@ mod tests {
 
         words_near_vec_map
             .entry(word.to_owned())
-            .or_insert_with(Vec::new)
+            .or_default()
             .append(&mut words_near_vec);
     }
 
