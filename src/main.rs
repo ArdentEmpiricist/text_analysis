@@ -53,8 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .expect("error transforming filename to str")
                     .contains("results_word_analysis")
                 && path.extension().and_then(OsStr::to_str) == Some("txt")
-                //|| path.extension().and_then(OsStr::to_str) == Some("pdf") //TO DO: Enable pdf
-                //|| path.extension().and_then(OsStr::to_str) == Some("docx") //TO DO: Enable docx
+            //|| path.extension().and_then(OsStr::to_str) == Some("pdf") //TO DO: Enable pdf
+            //|| path.extension().and_then(OsStr::to_str) == Some("docx") //TO DO: Enable docx
             {
                 documents.push(path);
             }
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .append(&mut words_near_vec);
             }
         } else if filename.extension().and_then(OsStr::to_str) == Some("pdf") {
-            /* 
+            /*
             PDF support still shows quite some errors and is prone to panic
             */
             let bytes = std::fs::read(filename).expect("error opening pdf-file");
@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .append(&mut words_near_vec);
             }
         } else if filename.extension().and_then(OsStr::to_str) == Some("docx") {
-            /* 
+            /*
             TO DO: Handle *.docx files
             */
             continue;
@@ -162,7 +162,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "Finished in {:?}! Please see file {:?} for results",
-        instant.elapsed(), filename
+        instant.elapsed(),
+        filename
     );
     Ok(())
 }

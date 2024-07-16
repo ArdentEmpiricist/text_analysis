@@ -85,8 +85,8 @@ pub fn count_words(words: &[String]) -> std::collections::HashMap<std::string::S
 pub fn sort_map_to_vec(
     frequency: HashMap<String, u32>,
 ) -> std::vec::Vec<(std::string::String, u32)> {
-    let mut vec_sorted: Vec<(String, u32)> = frequency.into_iter().collect(); 
-    vec_sorted.sort_by(|a, b| b.1.cmp(&a.1)); 
+    let mut vec_sorted: Vec<(String, u32)> = frequency.into_iter().collect();
+    vec_sorted.sort_by(|a, b| b.1.cmp(&a.1));
     vec_sorted
 }
 
@@ -139,7 +139,11 @@ pub fn save_file(to_file: String, mut path: PathBuf) -> std::io::Result<PathBuf>
         .to_string();
     path.push(new_filename);
 
-    let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(&path)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
 
     file.write_all(to_file.as_bytes())?;
 
@@ -188,65 +192,65 @@ mod tests {
 
     #[test]
     fn example_test() {
-    use std::time::Instant;
-    //start the clock
-    let instant = Instant::now();
+        use std::time::Instant;
+        //start the clock
+        let instant = Instant::now();
 
-    let mut frequency: HashMap<String, u32> = HashMap::new();
+        let mut frequency: HashMap<String, u32> = HashMap::new();
 
-    let mut words_near_vec_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut words_near_vec_map: HashMap<String, Vec<String>> = HashMap::new();
 
-    let mut map_near: HashMap<String, Vec<(String, u32)>> = HashMap::new();
+        let mut map_near: HashMap<String, Vec<(String, u32)>> = HashMap::new();
 
-    let text: String = "An example phrase including two times the word two".to_string();
-    let content_vec: Vec<String> = trim_to_words(text);
-    let mut words_near_vec: Vec<String> = Vec::new();
+        let text: String = "An example phrase including two times the word two".to_string();
+        let content_vec: Vec<String> = trim_to_words(text);
+        let mut words_near_vec: Vec<String> = Vec::new();
 
-    for (index, word) in content_vec.clone().into_iter().enumerate() {
-        *frequency.entry(word.to_owned()).or_insert(0) += 1;
+        for (index, word) in content_vec.clone().into_iter().enumerate() {
+            *frequency.entry(word.to_owned()).or_insert(0) += 1;
 
-        let min: usize = get_index_min(&index);
-        let max: usize = get_index_max(&index, &content_vec.len());
+            let min: usize = get_index_min(&index);
+            let max: usize = get_index_max(&index, &content_vec.len());
 
-        (for (number, value) in content_vec.iter().enumerate().take(max).skip(min) {
-            if number == index {
-                continue;
-            } else {
-                words_near_vec.push(value.clone()); //pushes -+5 words to vec
-            }
-        });
+            (for (number, value) in content_vec.iter().enumerate().take(max).skip(min) {
+                if number == index {
+                    continue;
+                } else {
+                    words_near_vec.push(value.clone()); //pushes -+5 words to vec
+                }
+            });
 
-        words_near_vec_map
-            .entry(word.to_owned())
-            .or_default()
-            .append(&mut words_near_vec);
-    }
+            words_near_vec_map
+                .entry(word.to_owned())
+                .or_default()
+                .append(&mut words_near_vec);
+        }
 
-    //count Vec with words nears each words
-    for (word, words) in words_near_vec_map {
-        let counted_near = sort_map_to_vec(count_words(&words));
-        map_near.entry(word).or_insert(counted_near);
-    }
+        //count Vec with words nears each words
+        for (word, words) in words_near_vec_map {
+            let counted_near = sort_map_to_vec(count_words(&words));
+            map_near.entry(word).or_insert(counted_near);
+        }
 
-    //Sort frequency HashMap into Vec
-    let counted = sort_map_to_vec(frequency);
+        //Sort frequency HashMap into Vec
+        let counted = sort_map_to_vec(frequency);
 
-    //format output
-    let mut to_file = String::new();
-    for (word, frequency) in counted {
-        let words_near = &map_near[&word];
-        let combined = format!(
-            "Word: {:?}, Frequency: {:?},\n Words near: {:?}\n\n",
-            word, frequency, words_near
+        //format output
+        let mut to_file = String::new();
+        for (word, frequency) in counted {
+            let words_near = &map_near[&word];
+            let combined = format!(
+                "Word: {:?}, Frequency: {:?},\n Words near: {:?}\n\n",
+                word, frequency, words_near
+            );
+            to_file.push_str(&combined);
+        }
+
+        //print time elapsed and output to stdout
+        println!(
+            "Finished in {:?}! Results:\n {}",
+            instant.elapsed(),
+            to_file
         );
-        to_file.push_str(&combined);
     }
-
-    //print time elapsed and output to stdout
-    println!(
-        "Finished in {:?}! Results:\n {}",
-        instant.elapsed(),
-        to_file
-    );
-}
 }
