@@ -6,7 +6,7 @@
 [![Crates.io](https://img.shields.io/crates/l/text_analysis)](https://github.com/LazyEmpiricist/text_analysis/blob/main/LICENSE)
 
 
-Analyze text stored as *.txt in chosen file or directory. Doesn't read files in subdirectories.
+Analyze text stored as *.pdf and *.txt in chosen file or directory. Doesn't read files in subdirectories.
 Counting all words and then searching for every unique word in the vicinity (+-5 words).
 Stores results in file [date/time]results_word_analysis.txt in given directory.
 
@@ -21,6 +21,7 @@ Uses chrono (https://crates.io/crates/chrono) to track time.
 text_analysis path/to/directory_or_file
 ```
 **Breaking Change in 0.2:** No longer reads pdfs. Any help to parse *.pdf and *.docx more than welcome.
+
 **Breaking Change in 0.3:** PDF support is back using the crate "pdf-extract", although reading PDFs is still prone to error (and panics). Any help to improve PDF-support and how to parse *.docx is more than welcome.
 
 ## Example 
