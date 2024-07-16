@@ -4,6 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/text_analysis)](https://crates.io/crates/text_analysis)
 [![Documentation](https://docs.rs/text_analysis/badge.svg)](https://docs.rs/text_analysis/)
 [![Crates.io](https://img.shields.io/crates/l/text_analysis)](https://github.com/LazyEmpiricist/text_analysis/blob/main/LICENSE)
+[![Deploy](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml/badge.svg)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml)
 
 
 Analyze text stored as *.pdf and *.txt in chosen file or directory. Doesn't read files in subdirectories.
@@ -14,7 +15,11 @@ Uses chrono (https://crates.io/crates/chrono) to track time.
 
 **Warning:** Doesn't ouput error if files could not be read and errors are subsequently ignored. May panic at (oddly formated) PDF-files.
 
-**To install:** clone the repository and build from source or use ```cargo install text_analysis```.
+**To install:** 
+There are different ways to install Text_Analysis
+- Use ```cargo install text_analysis```
+- Visit https://github.com/ArdentEmpiricist/text_analysis/releases and download the binary file for your operating system
+- Clone the repository and build from source
 
 **Usage:**
 ```
