@@ -1,6 +1,7 @@
 # Text_Analysis
 
 [![Rust](https://github.com/LazyEmpiricist/text_analysis/workflows/Rust/badge.svg?branch=main)](https://github.com/LazyEmpiricist/text_analysis)
+[![rust-clippy analyze](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/rust-clippy.yml)
 [![Crates.io](https://img.shields.io/crates/v/text_analysis)](https://crates.io/crates/text_analysis)
 [![Documentation](https://docs.rs/text_analysis/badge.svg)](https://docs.rs/text_analysis/)
 [![Crates.io](https://img.shields.io/crates/l/text_analysis)](https://github.com/LazyEmpiricist/text_analysis/blob/main/LICENSE)
