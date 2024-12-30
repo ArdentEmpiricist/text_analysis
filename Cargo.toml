@@ -1,14 +1,22 @@
 [package]
 name = "text_analysis"
-version = "0.3.4"
-authors = ["ArdentEmpiricist <35100899+ArdentrEmpiricist@users.noreply.github.com>"]
+version = "0.3.5"
+authors = [
+    "ArdentEmpiricist <35100899+ArdentrEmpiricist@users.noreply.github.com>",
+]
 edition = "2021"
 description = "Analyze text stored as *.txt in provided file or directory. Doesn't read files in subdirectories. Counting all words and then searching for every unique word in the vicinity (+-5 words). Stores results in file [date/time]results_word_analysis.txt in given directory."
 readme = "README.md"
 homepage = "https://docs.rs/text_analysis/"
 documentation = "https://docs.rs/text_analysis/"
 repository = "https://github.com/LazyEmpiricist/text_analysis"
-keywords = ["statistics", "word-analysis", "parsing", "text-processing", "science"]
+keywords = [
+    "statistics",
+    "word-analysis",
+    "parsing",
+    "text-processing",
+    "science",
+]
 categories = ["command-line-utilities", "parsing", "text-processing", "science"]
 license = "MIT"
 
@@ -23,6 +31,5 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chrono = "0.4.39"
-pdf-extract = "0.7.12"
-
+chrono = "0.4.38"
+pdf-extract = "0.7.7"

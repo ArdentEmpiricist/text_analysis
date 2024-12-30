@@ -11,7 +11,7 @@ use chrono::prelude::*;
 /// ```
 /// #[test]
 /// fn test() {
-/// use text_analysiss::trim_to_words;
+/// use text_analysis::trim_to_words;
 /// let words = "(_test] {test2!=".to_string();
 /// let trimmed = trim_to_words(words).unwrap();
 /// let expected = vec!["test".to_string(), "test2".to_string()];
@@ -41,7 +41,7 @@ pub fn trim_to_words(content: String) -> std::vec::Vec<std::string::String> {
 /// ```
 /// #[test]
 /// fn test_count_words() {
-/// use text_analysiss::count_words;
+/// use text_analysis::count_words;
 /// let words = vec![
 ///            "one".to_string(),
 ///            "two".to_string(),
@@ -61,7 +61,7 @@ pub fn trim_to_words(content: String) -> std::vec::Vec<std::string::String> {
 pub fn count_words(words: &[String]) -> std::collections::HashMap<std::string::String, u32> {
     let mut frequency: HashMap<String, u32> = HashMap::new();
     for word in words {
-        //ignore words constiting of only one char?
+        //ignore words consisting of only one char?
         //if word.len() > 1 {
         *frequency.entry(word.to_owned()).or_insert(0) += 1;
         //}
@@ -90,7 +90,7 @@ pub fn sort_map_to_vec(
     vec_sorted
 }
 
-///Get mininum index and guarantee that index is alway >=0
+///Get minimum index and guarantee that index is alway >=0
 /// # Example
 /// ```
 ///[test];
@@ -101,7 +101,6 @@ pub fn sort_map_to_vec(
 ///assert_eq!(min_index1, 0);
 ///};
 /// ```
-
 pub fn get_index_min(index: &usize) -> usize {
     if *index as isize - 5 < 0 {
         //check if index -5 would result in negative number, return 0 in case
@@ -112,7 +111,7 @@ pub fn get_index_min(index: &usize) -> usize {
     }
 }
 
-///Get maximum index and garantee that index does not exeed total length of Vec
+///Get maximum index and guarantee that index does not exceed total length of Vec
 /// # Example
 /// ```
 /// [test];
