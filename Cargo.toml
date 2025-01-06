@@ -32,4 +32,4 @@ path = "src/main.rs"
 
 [dependencies]
 chrono = "0.4.38"
-pdf-extract = "0.7.7"
+pdf-extract = "0.8.0"
