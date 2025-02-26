@@ -31,5 +31,5 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chrono = "0.4.38"
+chrono = "0.4.40"
 pdf-extract = "0.8.2"
