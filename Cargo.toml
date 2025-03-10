@@ -4,7 +4,7 @@ version = "0.3.5"
 authors = [
     "ArdentEmpiricist <35100899+ArdentrEmpiricist@users.noreply.github.com>",
 ]
-edition = "2021"
+edition = "2024"
 description = "Analyze text stored as *.txt in provided file or directory. Doesn't read files in subdirectories. Counting all words and then searching for every unique word in the vicinity (+-5 words). Stores results in file [date/time]results_word_analysis.txt in given directory."
 readme = "README.md"
 homepage = "https://docs.rs/text_analysis/"
