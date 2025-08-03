@@ -32,6 +32,7 @@ A robust, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` file
 * All errors (unreadable files, PDF problems) are reported at the end, never panic
 * CLI built with `clap`
 * Results output to timestamped files in the working directory
+* Failsafe: Outputs a `.txt` file containing the whole analysis
 
 ---
 
@@ -44,8 +45,6 @@ A robust, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` file
   ```
 * Download binary from [Releases](https://github.com/ArdentEmpiricist/text_analysis/releases)
 * Clone the repository and build from source
-
-**Requires Rust toolchain** ([rustup.rs](https://rustup.rs/))
 
 ---
 
