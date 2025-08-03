@@ -290,7 +290,7 @@ fn is_arabic(word: &str) -> bool {
 }
 
 // Sliding-Window, direct neighbors, and collocation position matrix
-fn collocation_stats(
+pub fn collocation_stats(
     words: &[String],
     window: usize,
 ) -> (
@@ -356,7 +356,7 @@ fn collocation_stats(
 }
 
 // Named Entity Extraction by simple capitalization rule
-fn detect_named_entities(words: &[String]) -> Vec<NamedEntity> {
+pub fn detect_named_entities(words: &[String]) -> Vec<NamedEntity> {
     let mut count = HashMap::new();
     let mut prev_end = true; // True if previous token ended a sentence
 
@@ -575,7 +575,7 @@ fn sort_map_to_vec<T: Clone + Eq + std::hash::Hash>(map: &HashMap<T, u32>) -> Ve
     vec
 }
 
-fn ngram_analysis(words: &[String], n: usize) -> HashMap<String, u32> {
+pub fn ngram_analysis(words: &[String], n: usize) -> HashMap<String, u32> {
     let mut ngram_counts = HashMap::new();
     if n == 0 || words.len() < n {
         return ngram_counts;
@@ -588,7 +588,7 @@ fn ngram_analysis(words: &[String], n: usize) -> HashMap<String, u32> {
 }
 
 // Load stopword list from file, one word per line.
-fn load_stopword_list(path: &str) -> Result<HashSet<String>, String> {
+pub fn load_stopword_list(path: &str) -> Result<HashSet<String>, String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
     Ok(content
         .lines()
@@ -608,7 +608,7 @@ pub fn print_failed_files(failed: &[String]) {
 }
 
 // Minimal stopword lists; you can expand as you like
-fn english_stopwords() -> HashSet<String> {
+pub fn english_stopwords() -> HashSet<String> {
     [
         "the", "and", "is", "in", "an", "to", "of", "a", "for", "on", "with", "at", "by", "from",
         "up", "about", "into", "over", "after", "than", "out", "against", "during", "without",
@@ -620,20 +620,20 @@ fn english_stopwords() -> HashSet<String> {
     .collect()
 }
 
-fn german_stopwords() -> HashSet<String> {
+pub fn german_stopwords() -> HashSet<String> {
     [
         "der", "die", "das", "und", "ist", "in", "zu", "den", "von", "mit", "auf", "für", "im",
         "an", "aus", "bei", "als", "durch", "nach", "über", "auch", "es", "sie", "sich", "dem",
         "er", "wir", "ich", "nicht", "ein", "eine", "des", "am", "so", "wie", "oder", "aber",
         "wenn", "man", "noch", "nur", "vor", "zur", "mehr", "um", "bis", "dann", "da", "zum",
-        "haben", "hat", "war", "werden", "wird", "sein",
+        "haben", "hat", "war", "werden", "wird", "sein", "weil", "sowie",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect()
 }
 
-fn french_stopwords() -> HashSet<String> {
+pub fn french_stopwords() -> HashSet<String> {
     [
         "le", "la", "les", "et", "est", "en", "du", "un", "une", "des", "dans", "pour", "par",
         "au", "aux", "avec", "de", "ce", "cette", "ces", "que", "qui", "sur", "pas", "plus", "se",
@@ -646,7 +646,7 @@ fn french_stopwords() -> HashSet<String> {
     .collect()
 }
 
-fn spanish_stopwords() -> HashSet<String> {
+pub fn spanish_stopwords() -> HashSet<String> {
     [
         "el", "la", "los", "las", "y", "es", "en", "un", "una", "de", "del", "al", "con", "por",
         "para", "que", "quien", "quienes", "se", "su", "sus", "no", "sí", "yo", "tú", "él", "ella",
@@ -660,7 +660,7 @@ fn spanish_stopwords() -> HashSet<String> {
     .collect()
 }
 
-fn italian_stopwords() -> HashSet<String> {
+pub fn italian_stopwords() -> HashSet<String> {
     [
         "il", "lo", "la", "i", "gli", "le", "e", "è", "in", "un", "una", "di", "da", "con", "per",
         "su", "che", "chi", "cui", "non", "si", "suo", "sua", "suoi", "lui", "lei", "io", "tu",
@@ -674,7 +674,7 @@ fn italian_stopwords() -> HashSet<String> {
     .collect()
 }
 
-fn arabic_stopwords() -> HashSet<String> {
+pub fn arabic_stopwords() -> HashSet<String> {
     [
         "و",
         "في",
@@ -798,37 +798,4 @@ fn arabic_stopwords() -> HashSet<String> {
     .iter()
     .map(|s| s.to_string())
     .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rust_stemmers::{Algorithm, Stemmer};
-
-    #[test]
-    fn test_trim_to_words_basic() {
-        let en_stemmer = Stemmer::create(Algorithm::English);
-        let stopwords = english_stopwords();
-        let input = "Running and running, is running fast.";
-        let res = trim_to_words(input, Some(&en_stemmer), &stopwords);
-        assert_eq!(res, vec!["run", "run", "run", "fast"]);
-    }
-
-    #[test]
-    fn test_french_stopwords() {
-        let fr_stemmer = Stemmer::create(Algorithm::French);
-        let stopwords = french_stopwords();
-        let input = "Le chat et le chien sont dans la maison.";
-        let res = trim_to_words(input, Some(&fr_stemmer), &stopwords);
-        // "le", "et", "la", "dans" should be removed
-        assert_eq!(res, vec!["chat", "chien", "sont", "maison"]);
-    }
-
-    #[test]
-    fn test_arabic_stopwords() {
-        let stopwords = arabic_stopwords();
-        let input = "هذا الكتاب في المكتب و هو جميل";
-        let res = trim_to_words(input, None, &stopwords);
-        assert_eq!(res, vec!["كتاب", "مكتب", "جميل"]);
-    }
 }
