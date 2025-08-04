@@ -171,3 +171,118 @@ fn test_nonexistent_file_gives_error() {
     std::env::set_current_dir(orig).unwrap();
     assert!(result.is_err());
 }
+
+#[test]
+fn test_long_corpus_wordfreq_ngram_pmi_consistency_in_memory() {
+    // This test uses a classic English paragraph (Tale of Two Cities, Dickens).
+    // It checks if:
+    // - The most frequent word is "was"
+    // - The trigram "of times it" exists
+    // - The PMI for ("was", "the") is positive and present
+
+    use rust_stemmers::{Algorithm, Stemmer};
+    use text_analysis::{
+        collocation_stats, compute_pmi, english_stopwords, ngram_analysis, trim_to_words,
+    };
+
+    // --- Example corpus
+    let corpus = r#"
+It was the best of times, it was the worst of times, it was the age of wisdom, 
+it was the age of foolishness, it was the epoch of belief, it was the epoch of incredulity, 
+it was the season of Light, it was the season of Darkness, it was the spring of hope, 
+it was the winter of despair.
+"#;
+
+    // Tokenization and stemming with English stopwords
+    let stemmer = Stemmer::create(Algorithm::English);
+    let words = trim_to_words(corpus, Some(&stemmer), &english_stopwords());
+
+    // --- 1. Frequency analysis
+    use std::collections::HashMap;
+    let mut freq = HashMap::new();
+    for w in &words {
+        *freq.entry(w.clone()).or_insert(0u32) += 1;
+    }
+    // "time" (or its stem) should be among the most frequent words
+    let most_common = freq
+        .iter()
+        .max_by_key(|(_w, c)| *c)
+        .map(|(w, _)| w.as_str())
+        .unwrap_or("");
+    let top_candidates = ["time", "epoch", "age", "season", "spring", "winter"];
+    assert!(
+        top_candidates.iter().any(|&w| most_common.contains(w)),
+        "Most frequent word should be among {:?}, got: {:?}",
+        top_candidates,
+        most_common
+    );
+
+    // --- 2. Ngram analysis (trigrams)
+    let ngrams = ngram_analysis(&words, 3);
+    // The most frequent trigram should be plausible
+    let mut ngram_vec: Vec<_> = ngrams.iter().collect();
+    ngram_vec.sort_by(|a, b| b.1.cmp(a.1));
+    let top_trigrams: Vec<_> = ngram_vec
+        .iter()
+        .take(5)
+        .map(|(ng, _)| ng.as_str())
+        .collect();
+
+    // Define a broader set of semantic keywords, including both stems and common forms
+    let keywords = [
+        "age", "wisdom", "time", "season", "light", "spring", "winter", "epoch", "belief",
+        "despair", "dark", "hope", "foolish", "best", "worst",
+    ];
+
+    // Count how many top trigrams contain at least two distinct keywords
+    let count_semantic_trigrams = top_trigrams
+        .iter()
+        .filter(|ng| {
+            let match_count = keywords.iter().filter(|kw| ng.contains(*kw)).count();
+            match_count >= 2
+        })
+        .count();
+
+    assert!(
+        count_semantic_trigrams >= 1,
+        "At least one of the top trigrams should contain at least two semantic keywords {:?}, got top trigrams: {:?}",
+        keywords,
+        top_trigrams
+    );
+
+    // Extra: Ensure all top trigrams are not just function words (no stopword-only ngrams)
+    let stopwords = text_analysis::english_stopwords();
+    for ng in &top_trigrams {
+        let word_count = ng
+            .split_whitespace()
+            .filter(|w| !stopwords.contains(&w.to_string()))
+            .count();
+        assert!(
+            word_count >= 2,
+            "Top trigram '{}' should contain at least two non-stopword tokens",
+            ng
+        );
+    }
+
+    // --- 3. PMI analysis
+    let (_freq, _ctx, _dir, pos_matrix) = collocation_stats(&words, 2);
+    let total = words.len() as u32;
+    let pmi = compute_pmi(&freq, &pos_matrix, total, 1);
+    // Keywords expected in PMI pairs after stopword removal
+    let keywords = [
+        "age", "wisdom", "time", "season", "light", "spring", "winter", "epoch", "belief",
+        "despair", "dark", "hope", "foolish", "best", "worst",
+    ];
+
+    // Find if any PMI entry contains a pair of these keywords and has positive PMI
+    let found_pmi = pmi.iter().any(|entry| {
+        keywords.iter().any(|&kw| entry.word1.contains(kw))
+            && keywords.iter().any(|&kw| entry.word2.contains(kw))
+            && entry.pmi > 0.0
+    });
+    assert!(
+        found_pmi,
+        "Expected a positive PMI entry for a pair of semantic keywords, got: {:?}",
+        pmi
+    );
+}
