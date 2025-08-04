@@ -39,7 +39,7 @@ A robust, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` file
 * All errors (unreadable files, PDF problems) are reported at the end, never panic
 * CLI built with `clap`
 * Results output to timestamped files in the working directory
-* Failsafe: Outputs a `.txt` file containing the whole analysis
+* Failsafe: Always outputs a `.txt` file containing the whole analysis
 
 ---
 
