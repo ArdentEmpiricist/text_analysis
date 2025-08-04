@@ -116,12 +116,23 @@ Warning: The following files could not be read:
   ./unreadable.txt: ...
 ```
 
-**Exported files:**
+**Exported Files:**
 
-* `20250803_191010_wordfreq.csv` (or `.json`)
-* `20250803_191010_ngrams.csv`
-* `20250803_191010_namedentities.csv`
-* `20250803_191010_pmi.csv`
+The output files now start with the analyzed filename, followed by the analysis type and a timestamp. For example:
+
+- `mytext_wordfreq_20250803_191010.csv`
+- `mytext_ngrams_20250803_191010.csv`
+- `mytext_namedentities_20250803_191010.csv`
+- `mytext_pmi_20250803_191010.csv`
+
+When using combined analysis (`--combine`):
+
+- `combined_wordfreq_20250803_191010.csv`
+- `combined_ngrams_20250803_191010.csv`
+- etc.
+
+The exact file naming scheme is:  
+`<filename>_<analysis-type>_<timestamp>.<ext>`
 
 ---
 

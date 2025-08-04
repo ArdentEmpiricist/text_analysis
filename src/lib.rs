@@ -46,7 +46,13 @@ impl AnalysisResult {
             out.push_str(&format!("Ngram: \"{}\" — Count: {}\n", ngram, count));
         }
         out.push_str("\n=== Word Frequencies and Context ===\n");
-        for (word, freq) in self.wordfreq.iter().take(20) {
+
+        // 1. Collect all word frequencies into a Vec and sort by descending frequency
+        let mut freq_vec: Vec<_> = self.wordfreq.iter().collect();
+        freq_vec.sort_by(|a, b| b.1.cmp(a.1)); // Sort by frequency, descending
+
+        // 2. Output the top 20 words
+        for (word, freq) in freq_vec.into_iter().take(20) {
             out.push_str(&format!("Word: \"{}\" — Frequency: {}\n", word, freq));
             if let Some(ctx) = self.context.get(word) {
                 out.push_str("    Words near: ");
@@ -63,6 +69,7 @@ impl AnalysisResult {
                 out.push('\n');
             }
         }
+
         out.push_str("\n=== Named Entities ===\n");
         for (ent, count) in self.named_entities.iter().take(20) {
             out.push_str(&format!("  {:20} — Count: {}\n", ent, count));
