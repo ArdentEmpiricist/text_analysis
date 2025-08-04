@@ -1,13 +1,10 @@
 use rust_stemmers::{Algorithm, Stemmer};
 use std::fs;
+use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use tempfile::tempdir;
-use text_analysis::{
-    ExportFormat, PmiEntry, analyze_path, arabic_stopwords, collocation_stats, compute_pmi,
-    english_stopwords, french_stopwords, german_stopwords, italian_stopwords, ngram_analysis,
-    spanish_stopwords, trim_to_words,
-};
+use text_analysis::*;
 
 // --- Helper for ngram content check
 fn ngram_contains(ngrams: &std::collections::HashMap<String, u32>, needle: &str) -> bool {
