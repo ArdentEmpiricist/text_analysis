@@ -11,7 +11,7 @@ A robust, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` file
 
 * **Automatic language detection** (English, German, French, Spanish, Italian, Arabic)
 * **Stemming** (where possible)
-* **Stopword removal** (per language, and optionally custom stoplist)
+* **Optional stopword removal** (via custom stoplist)
 * **N-gram analysis** (user-defined N)
 * **Word frequency and context statistics**
 * **Sliding-window co-occurrence and direct neighbors**
@@ -28,7 +28,6 @@ A robust, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` file
 
 * Automatic language detection (`whatlang`)
 * Per-language stemming (via `rust-stemmers`), or none (e.g. for Arabic)
-* Built-in stopword lists for English, German, French, Spanish, Italian, Arabic
 * Custom stopword lists supported (plain .txt, one word per line)
 * Counts and outputs N-grams (size configurable via CLI, e.g. bigrams, trigrams)
 * Context statistics: for every word, which words appear nearby most frequently (±N window)
@@ -67,6 +66,10 @@ text_analysis <path> [--stopwords stoplist.txt] [--ngram N] [--context N] [--exp
 * `--context N`: (optional, default: 5) context window size (N = ±N words)
 * `--export-format FORMAT`: `txt` (default), `csv`, `tsv`, or `json` (exports results as separate files)
 * `--entities-only`: only export named entities (names), not full statistics
+* `--combine`: Analyze all files together and output combined result files
+
+By default, each file is analyzed and exported individually.
+With --combine, all files are analyzed as a single corpus and combined result files are exported.
 
 **During analysis, a progress bar and the current file being read are shown in the terminal.**
 
@@ -122,15 +125,80 @@ Warning: The following files could not be read:
 
 ---
 
-## Library Example
+
+## Using as a Library
+
+This crate can be used directly in your own Rust projects for fast multi-language text analysis.  
+You get all core functions, including n-gram extraction, frequency analysis, collocation statistics (PMI), and automatic or custom stopword support.
+
+Add to your `Cargo.toml`:
+```toml
+[dependencies]
+text_analysis = { path = "path/to/your/text_analysis" }
+```
+
+### Example 1: Analyze a Text for English Bigrams
 
 ```rust
-use text_analysis::{analyze_text, trim_to_words, english_stopwords};
-let text = "The quick brown fox jumps over the lazy dog.";
-let stopwords = english_stopwords();
-let out = analyze_text(text, None, &stopwords, 2);
-println!("{}", out);
+use text_analysis::*;
+
+fn main() {
+    let text = "The quick brown fox jumps over the lazy dog. The fox was very quick!";
+    let stopwords = default_stopwords_for_language("en");
+    let result = analyze_text(text, &stopwords, 2, 2); // bigrams, window = 2
+
+    println!("Top 3 bigrams:");
+    for (ngram, count) in result.ngrams.iter().take(3) {
+        println!("{}: {}", ngram, count);
+    }
+}
 ```
+
+### Example 2: Frequency and Named Entity Extraction for German
+
+```rust
+use text_analysis::*;
+
+fn main() {
+    let text = "Goethe schrieb den Faust. Faust ist ein Klassiker der deutschen Literatur.";
+    let stopwords = default_stopwords_for_language("de");
+    let result = analyze_text(text, &stopwords, 1, 2); // unigrams, window = 2
+
+    println!("Most frequent words:");
+    for (word, count) in result.wordfreq.iter().take(5) {
+        println!("{}: {}", word, count);
+    }
+    println!("
+Named entities:");
+    for (entity, count) in result.named_entities.iter() {
+        println!("{}: {}", entity, count);
+    }
+}
+```
+
+### Example 3: PMI Collocation Extraction with Custom Stopwords
+
+```rust
+use std::collections::HashSet;
+use text_analysis::*;
+
+fn main() {
+    let text = "Alice loves Bob. Bob loves Alice. Alice and Bob are friends.";
+    let mut stopwords = HashSet::new();
+    for w in ["and", "are", "loves"] { stopwords.insert(w.to_string()); }
+    let result = analyze_text(text, &stopwords, 1, 2); // unigrams, window = 2
+
+    println!("PMI pairs (min_count=5):");
+    for entry in result.pmi.iter().take(5) {
+        println!("({}, {})  PMI: {:.2}", entry.word1, entry.word2, entry.pmi);
+    }
+}
+```
+
+---
+
+**Tip:**  
+All functions work with any Unicode text.
 
 ---
 
