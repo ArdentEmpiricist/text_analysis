@@ -7,7 +7,7 @@
 
 # Text\_Analysis
 
-A robust, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` files, supporting:
+A robust, fast, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` files, supporting:
 
 * **Automatic language detection** (English, German, French, Spanish, Italian, Arabic)
 * **Stemming** (where possible)
