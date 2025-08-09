@@ -8,7 +8,7 @@
 # Text\_Analysis
 
 <p align="center">
-  <img src="assets/text_analysis_logo.png" alt="Text Analysis logo" width="200"/>
+  <img src="https://raw.githubusercontent.com/ArdentEmpiricist/text_analysis/main/assets/text_analysis_logo.png" alt="Text Analysis logo" width="200"/>
 </p>
 
 A robust, fast, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` files, supporting:

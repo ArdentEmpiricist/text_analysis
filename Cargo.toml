@@ -1,6 +1,6 @@
 [package]
 name = "text_analysis"
-version = "0.4.1"
+version = "0.4.2"
 authors = [
     "ArdentEmpiricist <35100899+ArdentrEmpiricist@users.noreply.github.com>",
 ]
