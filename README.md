@@ -213,8 +213,8 @@ fn main() {
 
 ---
 
-**Tip:**  
-All functions work with any Unicode text.
+> [!TIP]
+> All functions work with any Unicode text.
 
 ---
 
