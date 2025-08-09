@@ -1,3 +1,34 @@
+#![forbid(unsafe_code)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/ArdentEmpiricist/text_analysis/main/assets/text_analysis_logo.png"
+)]
+//! # Text Analysis Library
+//!
+//! This crate provides core functionality for analyzing plain text (`.txt`) and PDF documents (`.pdf`).
+//! It can be used as a library or via the CLI in `main.rs`.
+//!
+//! ## Features
+//! - **File collection**: Recursively search for `.txt` and `.pdf` files.
+//! - **N-gram extraction**: Count contiguous word sequences of length N.
+//! - **Word frequency analysis**: Count individual word occurrences.
+//! - **Context mapping**: Identify co-occurring words within a configurable window.
+//! - **Direct neighbor detection**: Identify words immediately before and after a given word.
+//! - **Named entity detection**: Heuristic extraction of capitalized words.
+//! - **PMI (Pointwise Mutual Information)** calculation: Measure statistical association strength between word pairs.
+//! - **Export**: Save results in TXT, CSV, TSV, or JSON formats.
+//!
+//! ## Typical Usage
+//! ```rust
+//! use text_analysis::{analyze_text, load_stopwords};
+//! use std::collections::HashSet;
+//! let text = "This is a sample text for analysis.";
+//! let stopwords: HashSet<String> = HashSet::new();
+//! let result = analyze_text(text, &stopwords, 2, 5);
+//! println!("{}", result.summary());
+//! ```
+//!
+//! All file I/O, PDF extraction, and export helpers are included.
+
 use chrono::Local;
 use pdf_extract::extract_text;
 use std::collections::{HashMap, HashSet};
@@ -92,7 +123,21 @@ pub struct AnalysisReport {
     pub failed_files: Vec<String>,
 }
 
-/// Recursively collect all .txt and .pdf files from a given path.
+/// Recursively collect all `.txt` and `.pdf` files from a given path.
+///
+/// # Arguments
+/// * `path` - Path to a file or directory to scan.
+///
+/// # Returns
+/// A vector of file paths (as strings) matching the supported extensions.
+///
+/// # Examples
+/// ```
+/// use text_analysis::collect_files;
+/// use std::path::Path;
+/// let files = collect_files(Path::new("examples"));
+/// println!("Found {} files", files.len());
+/// ```
 pub fn collect_files(path: &Path) -> Vec<String> {
     let mut files = Vec::new();
     if path.is_file() {
@@ -122,7 +167,22 @@ pub fn collect_files(path: &Path) -> Vec<String> {
     files
 }
 
-/// Analyze all files as separate documents ("default mode")
+/// Analyze all files as separate documents (**default mode**).
+/// Each file is processed independently and results are exported separately.
+///
+/// # Arguments
+/// * `path` - Path to a file or directory.
+/// * `stopwords` - Optional path to a stopword list file.
+/// * `ngram` - Size of N-gram sequences to extract.
+/// * `context` - Size of the context window for co-occurrence statistics.
+/// * `export_format` - Output format for export files.
+/// * `entities_only` - If true, only named entities are exported.
+///
+/// # Returns
+/// `Ok(AnalysisReport)` containing results and any failed files, or `Err` if no files are found.
+///
+/// # Errors
+/// Returns an error string if no matching files are found.
 pub fn analyze_path(
     path: &str,
     stopwords: Option<String>,

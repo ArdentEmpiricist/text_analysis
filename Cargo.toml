@@ -7,7 +7,7 @@ authors = [
 edition = "2024"
 description = "A robust multilingual text analysis CLI with context, N-grams, named entities, and CSV/JSON export."
 readme = "README.md"
-homepage = "https://docs.rs/text_analysis/"
+homepage = "https://crates.io/crates/text_analysis"
 documentation = "https://docs.rs/text_analysis/"
 repository = "https://github.com/LazyEmpiricist/text_analysis"
 keywords = [
@@ -18,7 +18,7 @@ keywords = [
     "science",
 ]
 categories = ["command-line-utilities", "parsing", "text-processing", "science"]
-license = "MIT"
+license = "MIT OR Apache-2.0"
 
 [lib]
 name = "text_analysis"

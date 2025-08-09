@@ -1,3 +1,26 @@
+#![forbid(unsafe_code)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/ArdentEmpiricist/text_analysis/main/assets/text_analysis_logo.png"
+)]
+//! # Text Analysis CLI
+//!
+//! This is the command-line interface for the `text_analysis` crate.
+//! It provides a convenient way to run N-gram, context, and entity analysis
+//! on `.txt` and `.pdf` documents without writing Rust code.
+//!
+//! ## Features
+//! - Analyze each file individually or all files combined.
+//! - Export results in multiple formats.
+//! - Configure N-gram size, context window, and optional stopword list.
+//! - Named entity extraction mode.
+//!
+//! ## Example
+//! ```bash
+//! cargo run --release -- path/to/data --ngram 3 --context 5 --export-format csv
+//! ```
+//!
+//! See `--help` for all available options.
+
 use clap::{Parser, ValueEnum};
 use env_logger;
 use log::error;
