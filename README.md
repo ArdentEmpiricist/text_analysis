@@ -74,8 +74,7 @@ text_analysis <path> [--stopwords stoplist.txt] [--ngram N] [--context N] [--exp
 * `--combine`: Analyze all files together and output combined result files
 
 > [!NOTE]
-> By default, each file is analyzed and exported individually.
-> With --combine, all files are analyzed as a single corpus and combined result files are exported.
+> By default, each file is analyzed and exported individually. With --combine, all files are analyzed as a single corpus and combined result files are exported.
 
 **During analysis, a progress bar and the current file being read are shown in the terminal.**
 
