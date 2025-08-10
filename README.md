@@ -25,9 +25,10 @@ A robust, fast, modern CLI tool for linguistic text analysis in `.txt` and `.pdf
 * **Export as TXT, CSV, TSV, or JSON**
 * **Recursively scans directories**
 * **Per-file analysis is parallelized** (Rayon); output writing is serialized
+* **Combined Mode uses Map‑Reduce** (see below)
 * **Never panics: all file errors are reported, not fatal**
 
-> **Note:** PDF parsing is built-in via `pdf-extract`
+> **Note:** PDF parsing is built-in via `pdf-extract` — no feature flag required.
 
 ---
 
@@ -77,26 +78,24 @@ text_analysis <path> [--stopwords FILE] [--ngram N] [--context N] [--export-form
 * `--context N`: (optional, default: 5) context window size (±N words)
 * `--export-format FORMAT`: `txt` (default), `csv`, `tsv`, or `json`
 * `--entities-only`: only export named entities (not all statistics)
-* `--combine`: analyze all files together and output combined result files
+* `--combine`: analyze all files together as **one corpus** (Map‑Reduce, see below)
 * `--stem`: enable stemming (based on detected language)
 * `--stem-lang LANG`: force stemming language (`en`, `de`, `fr`, `es`, `it`, `pt`, `nl`, `ru`, `sv`, `fi`, `no`, `ro`, `hu`, `da`, `tr`); only effective with `--stem`
 
-> [!NOTE]
-> By default, each file is analyzed and exported individually. With --combine, all files are analyzed as a single corpus and combined result files are exported.
-
-**During analysis, a progress bar and the current file being read are shown in the terminal.**
+By default, each file is analyzed and exported individually.  
+With `--combine`, files are analyzed as a single corpus using **Map‑Reduce**.
 
 Example:
 
 ```sh
-text_analysis ./my_corpus/ --stopwords my_stoplist.txt --ngram 3 --context 4 --export-format csv --stem
+text_analysis ./my_corpus/ --stopwords my_stoplist.txt --ngram 3 --context 4 --export-format csv --stem --combine
 ```
 
 ---
 
 ## Output files & naming
 
-Output files are named with a collision-safe stem, an 8‑char path hash, a timestamp, and the analysis type.
+Output files use a collision-safe stem, an 8-char path hash, a timestamp, and the analysis type.
 
 ```
 <stem[.ext]>_<hash8>_<timestamp>_<analysis-type>.<ext>
@@ -112,9 +111,34 @@ Examples:
 
 ---
 
+## Combined Mode (Map‑Reduce)
+
+When `--combine` is set, the corpus is processed via **Map‑Reduce** for scalability and consistency:
+
+**Map (parallel):** for each file, build **partial counts** from normalized tokens  
+(lowercased, optional stopwords removed, optional stemming):
+- `ngrams: HashMap<String, usize>`
+- `wordfreq: HashMap<String, usize>`
+- `context_pairs: HashMap<(String, String), usize>` (center, neighbor in ±window)
+- `neighbor_pairs: HashMap<(String, String), usize>` (direct neighbors ±1)
+- `cooc_by_dist: HashMap<(String, String, usize), usize>` (canonical pair, distance)
+- `named_entities: HashMap<String, usize>` from the **original** (non‑stemmed) tokens
+- `n_tokens: usize`
+
+**Reduce (serial):** merge all partial counts into global totals.
+
+**Finalize (serial):**
+- Construct the final `AnalysisResult` from totals
+- Compute **PMI** from global pair counts & unigram counts (single global pass)
+- Write **one** set of combined outputs, e.g. `combined_<timestamp>_wordfreq.csv`
+
+> Benefits: avoids holding a giant concatenated string in memory, maximizes parallelism, and ensures PMI/frequencies are consistent across the whole corpus.
+
+---
+
 ## Using as a Library
 
-You get n‑gram extraction, frequency analysis, PMI collocations, optional stemming, and custom stopword support.
+You get n-gram extraction, frequency analysis, PMI collocations, optional stemming, and custom stopword support.
 
 ### Example 1: English bigrams (no stopwords, no stemming)
 
@@ -180,36 +204,41 @@ fn main() {
 
 ---
 
-> [!TIP]
-> All functions work with any Unicode text.
+## Named-Entity Heuristic (how it works)
+
+The current NER is a **simple capitalization heuristic**:
+
+1. Tokenize the **original (non-stemmed)** text.
+2. Count a token as an entity candidate if it:
+   - starts with an uppercase letter (Unicode-aware),
+   - is **not** fully uppercase (filters acronyms like “NASA”),
+   - is **not** a common function word at sentence start (basic list).
+3. Counts are **case-sensitive** (so “Berlin” ≠ “BERLIN”).
+
+> This heuristic is fast and deterministic and will overgenerate in some cases (e.g., sentence-initial words). For higher quality, post-filter with custom lists or integrate a proper NER model. NER uses original tokens; stemming affects only statistics.
 
 ---
 
-## Scientific Features & Best Practices
+## Performance Notes
 
-* Language-aware stemming for English, German, French, Spanish, Italian, Arabic
-* Optional stoplist (e.g. for project-specific terms)
-* N-gram and co-occurrence analysis for computational linguistics or stylometry
-* Collocation statistics with mutual information (PMI)
-* Configurable context window size (±N words)
-* All outputs can be processed as CSV/TSV/JSON, e.g. in R, Python, Excel, pandas, etc.
-* Named Entities exported for further annotation or statistics
-* Errors and files skipped are always listed at the end
+* Per-file analysis runs in parallel using Rayon (compute); output writing is serialized to avoid I/O contention.
+* Combined mode uses Map‑Reduce: files are mapped in parallel to partial counts, then reduced. PMI is computed once globally from aggregated counts.
+* The short hash in filenames avoids collisions across files with the same stem when running in parallel.
 
 ---
 
 ## To Do / Ideas
 
-* [x] Multi‑language support
+* [x] Multi-language support
 * [x] Custom stopword list from file
-* [x] N‑gram statistics
+* [x] N-gram statistics
 * [x] Direct neighbor analysis
 * [x] Named Entity detection (heuristic)
 * [x] Collocation/PMI output
 * [x] CSV/JSON/TSV export
 * [x] Context window size (CLI flag)
-* [x] Parallel per‑file analysis (Rayon)
-* [ ] Map/Reduce‑style combined analysis (aggregate counts first)
+* [x] Parallel per-file analysis (Rayon)
+* [x] **Map‑Reduce combined mode**
 * [ ] Lemmatization for more languages
 * [ ] Richer reporting (collocation metrics, word clouds)
 

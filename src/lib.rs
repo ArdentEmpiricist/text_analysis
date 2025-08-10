@@ -168,6 +168,29 @@ pub struct PmiEntry {
     pub pmi: f64,
 }
 
+/// Partial counts for a single file (map stage output).
+#[derive(Default)]
+struct PartialCounts {
+    // tokens used for statistics (lowercased, stopwords filtered, stemmed depending on opts)
+    n_tokens: usize,
+
+    // statistics
+    ngrams: HashMap<String, usize>,
+    wordfreq: HashMap<String, usize>,
+
+    // context within ±window (distance-agnostic): (center, neighbor) -> count
+    context_pairs: HashMap<(String, String), usize>,
+
+    // direct neighbors (±1): (center, neighbor) -> count
+    neighbor_pairs: HashMap<(String, String), usize>,
+
+    // co-occurrence counts by distance for PMI: (w1<=w2, distance) -> count
+    cooc_by_dist: HashMap<(String, String, usize), usize>,
+
+    // NER on original (non-stemmed) tokens
+    named_entities: HashMap<String, usize>,
+}
+
 /// Entry point: analyze a path (file or directory).
 /// Files are collected **once**; then either combined or per-file processing happens.
 pub fn analyze_path(
@@ -186,25 +209,33 @@ pub fn analyze_path(
     let ts = timestamp();
 
     if options.combine {
-        // Combined mode: read all texts, analyze once.
-        // Parallel read
-        let read_results: Vec<_> = files.par_iter().map(|f| (f, read_text(f))).collect();
+        // --- Combined mode via Map-Reduce ---
+        // Map: read + build partial counts in parallel
+        let mapped: Vec<_> = files
+            .par_iter()
+            .map(|f| match read_text(f) {
+                Ok(t) => Ok(partial_counts_from_text(&t, &stopwords, options)),
+                Err(e) => Err((f.display().to_string(), e)),
+            })
+            .collect();
 
-        let mut failed: Vec<(String, String)> = Vec::new();
-        let mut combined_text = String::new();
-        for (f, res) in read_results {
-            match res {
-                Ok(t) => {
-                    combined_text.push_str(&t);
-                    combined_text.push('\n');
-                }
-                Err(e) => failed.push((f.display().to_string(), e)),
+        // Reduce: merge partials, collect failures
+        let mut total = PartialCounts::default();
+        let mut failed_local: Vec<(String, String)> = Vec::new();
+        for item in mapped {
+            match item {
+                Ok(pc) => merge_counts(&mut total, pc),
+                Err(fe) => failed_local.push(fe),
             }
         }
 
-        let result = analyze_text_with(&combined_text, &stopwords, options);
+        // Build final AnalysisResult and write outputs
+        let result = analysis_from_counts(total, options);
         write_all_outputs("combined", &result, &ts, options)?;
         let summary = summary_for(&[("combined".to_string(), &result)], options);
+
+        // merge failures into outer vector
+        failed.extend(failed_local);
         return Ok(AnalysisReport {
             summary,
             failed_files: failed,
@@ -411,6 +442,190 @@ fn normalize_for_stats(
         };
         out.push(normalized);
     }
+    out
+}
+
+/// Build per-file partial counts (map stage) from raw text.
+fn partial_counts_from_text(
+    text: &str,
+    stopwords: &HashSet<String>,
+    opts: &AnalysisOptions,
+) -> PartialCounts {
+    // Language detection (for stemming)
+    let lang_guess = whatlang::detect(text);
+    let stem_lang = match opts.stem_mode {
+        StemMode::Off => StemLang::Unknown,
+        StemMode::Auto => lang_guess
+            .as_ref()
+            .map(|i| StemLang::from_whatlang(i.lang()))
+            .unwrap_or(StemLang::Unknown),
+        StemMode::Force(lang) => lang,
+    };
+
+    // Tokens
+    let original_tokens = tokenize(text);
+    let tokens_for_stats = normalize_for_stats(&original_tokens, stopwords, stem_lang);
+    let n = tokens_for_stats.len();
+
+    // Prepare counts
+    let mut pc = PartialCounts::default();
+    pc.n_tokens = n;
+
+    // n-grams
+    if opts.ngram > 0 && n >= opts.ngram {
+        for i in 0..=n - opts.ngram {
+            let mut buf = String::with_capacity(opts.ngram * 6);
+            for (k, t) in tokens_for_stats[i..i + opts.ngram].iter().enumerate() {
+                if k > 0 {
+                    buf.push(' ');
+                }
+                buf.push_str(t);
+            }
+            *pc.ngrams.entry(buf).or_insert(0) += 1;
+        }
+    }
+
+    // wordfreq
+    for t in &tokens_for_stats {
+        *pc.wordfreq.entry(t.clone()).or_insert(0) += 1;
+    }
+
+    // context & neighbors & PMI pairs
+    let window = opts.context;
+    if window > 0 && n > 0 {
+        for (i, w) in tokens_for_stats.iter().enumerate() {
+            let left = i.saturating_sub(window);
+            let right = (i + window + 1).min(n);
+            for j in left..right {
+                if j == i {
+                    continue;
+                }
+                // distance-agnostic context pairs
+                let key_ctx = (w.clone(), tokens_for_stats[j].clone());
+                *pc.context_pairs.entry(key_ctx).or_insert(0) += 1;
+
+                // PMI pair-by-distance with canonical order (w1 <= w2)
+                let (a, b) = if w <= &tokens_for_stats[j] {
+                    (w.clone(), tokens_for_stats[j].clone())
+                } else {
+                    (tokens_for_stats[j].clone(), w.clone())
+                };
+                let d = (i as isize - j as isize).abs() as usize;
+                *pc.cooc_by_dist.entry((a, b, d)).or_insert(0) += 1;
+            }
+
+            // direct neighbors (±1)
+            if i > 0 {
+                let key_left = (w.clone(), tokens_for_stats[i - 1].clone());
+                *pc.neighbor_pairs.entry(key_left).or_insert(0) += 1;
+            }
+            if i + 1 < n {
+                let key_right = (w.clone(), tokens_for_stats[i + 1].clone());
+                *pc.neighbor_pairs.entry(key_right).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // NER on original tokens (heuristic)
+    let mut ner = HashMap::new();
+    let sentences = split_sentences(text);
+    named_entities_heuristic(&original_tokens, &sentences, &mut ner);
+    pc.named_entities = ner;
+
+    pc
+}
+
+/// Merge another PartialCounts into `into` (reduce stage).
+fn merge_counts(into: &mut PartialCounts, other: PartialCounts) {
+    into.n_tokens += other.n_tokens;
+
+    for (k, v) in other.ngrams {
+        *into.ngrams.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.wordfreq {
+        *into.wordfreq.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.context_pairs {
+        *into.context_pairs.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.neighbor_pairs {
+        *into.neighbor_pairs.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.cooc_by_dist {
+        *into.cooc_by_dist.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.named_entities {
+        *into.named_entities.entry(k).or_insert(0) += v;
+    }
+}
+
+/// Build a full AnalysisResult from reduced PartialCounts (single global pass).
+fn analysis_from_counts(total: PartialCounts, opts: &AnalysisOptions) -> AnalysisResult {
+    let mut result = AnalysisResult::default();
+
+    // ngrams, wordfreq, named_entities
+    result.ngrams = total.ngrams;
+    result.wordfreq = total.wordfreq;
+    result.named_entities = total.named_entities;
+
+    // context_map: (center, neighbor) -> nested
+    for ((center, neighbor), c) in total.context_pairs {
+        let entry = result
+            .context_map
+            .entry(center)
+            .or_insert_with(HashMap::new);
+        *entry.entry(neighbor).or_insert(0) += c;
+    }
+
+    // direct_neighbors: (center, neighbor) -> nested
+    for ((center, neighbor), c) in total.neighbor_pairs {
+        let entry = result
+            .direct_neighbors
+            .entry(center)
+            .or_insert_with(HashMap::new);
+        *entry.entry(neighbor).or_insert(0) += c;
+    }
+
+    // PMI: compute from total.cooc_by_dist, total.n_tokens, and result.wordfreq
+    result.pmi = pmi_from_global_counts(&total.cooc_by_dist, total.n_tokens, &result.wordfreq);
+
+    result
+}
+
+/// Compute PMI from global pair counts-by-distance and unigram counts.
+fn pmi_from_global_counts(
+    cooc_by_dist: &HashMap<(String, String, usize), usize>,
+    n_tokens: usize,
+    wordfreq: &HashMap<String, usize>,
+) -> Vec<PmiEntry> {
+    if n_tokens == 0 {
+        return Vec::new();
+    }
+    let total = n_tokens as f64;
+
+    let mut out = Vec::with_capacity(cooc_by_dist.len());
+    for ((w1, w2, d), c) in cooc_by_dist {
+        let c1 = *wordfreq.get(w1).unwrap_or(&1) as f64;
+        let c2 = *wordfreq.get(w2).unwrap_or(&1) as f64;
+        let p_xy = (*c as f64) / total;
+        let p_x = c1 / total;
+        let p_y = c2 / total;
+        let pmi = (p_xy / (p_x * p_y)).ln();
+        out.push(PmiEntry {
+            word1: w1.clone(),
+            word2: w2.clone(),
+            distance: *d,
+            count: *c,
+            pmi,
+        });
+    }
+
+    out.sort_by(|a, b| {
+        b.pmi
+            .partial_cmp(&a.pmi)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.count.cmp(&a.count))
+    });
     out
 }
 
