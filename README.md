@@ -6,7 +6,7 @@
 [![Deploy](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml/badge.svg)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml)
 [![Crates.io](https://img.shields.io/crates/d/text_analysis?color=darkblue)](https://crates.io/crates/text_analysis)
 
-# Text\_Analysis
+# Text_Analysis
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ArdentEmpiricist/text_analysis/main/assets/text_analysis_logo.png" alt="Text Analysis logo" width="200"/>
@@ -15,16 +15,15 @@
 A robust, fast, modern CLI tool for linguistic text analysis in `.txt` and `.pdf` files, supporting:
 
 * **Automatic language detection** (English, German, French, Spanish, Italian, Arabic)
-* **Stemming** (where possible)
-* **Optional stopword removal** (via custom stoplist)
+* **Optional stopword filtering** (user-provided custom list; no automatic removal)
+* **Optional stemming** (via `rust-stemmers` for supported languages)
 * **N-gram analysis** (user-defined N)
 * **Word frequency and context statistics**
 * **Sliding-window co-occurrence and direct neighbors**
-* **Named Entity recognition (simple heuristic)**
+* **Named Entity recognition (simple heuristic, see below)**
 * **Collocation analysis with Pointwise Mutual Information (PMI) for all word pairs in the context window**
 * **Export as TXT, CSV, TSV, or JSON for further processing**
 * **Recursively scans directories**
-* **Live progress bar for file reading**
 * **Never panics: all file errors are reported, not fatal**
 
 ---
@@ -32,18 +31,17 @@ A robust, fast, modern CLI tool for linguistic text analysis in `.txt` and `.pdf
 ## Features
 
 * Automatic language detection (`whatlang`)
-* Per-language stemming (via `rust-stemmers`), or none (e.g. for Arabic)
 * Custom stopword lists supported (plain .txt, one word per line)
+* Optional stemming (`--stem`, auto by detected language, or `--stem-lang <code>` to override)
 * Counts and outputs N-grams (size configurable via CLI, e.g. bigrams, trigrams)
 * Context statistics: for every word, which words appear nearby most frequently (±N window)
 * Direct neighbors (±1) are reported separately
-* Collocation analysis with PMI, for all word pairs in the context window (CSV/JSON export)
-* Named Entity recognition via capitalization heuristic
-* Progress bar and current file output during analysis (`indicatif`)
-* All errors (unreadable files, PDF problems) are reported at the end, never panic
+* Collocation analysis with PMI for all word pairs in the context window (CSV/JSON export)
+* Named Entity recognition via capitalization heuristic (documented below)
+* All errors (unreadable files, PDF problems) are reported at the end (never panic)
 * CLI built with `clap`
 * Results output to timestamped files in the working directory
-* Failsafe: Always outputs a `.txt` file containing the whole analysis
+* Always prints a concise analysis summary to the terminal
 
 ---
 
@@ -57,41 +55,48 @@ A robust, fast, modern CLI tool for linguistic text analysis in `.txt` and `.pdf
 * Download binary from [Releases](https://github.com/ArdentEmpiricist/text_analysis/releases)
 * Clone the repository and build from source
 
+Add to your `Cargo.toml` if you use it as a library:
+
+```toml
+[dependencies]
+text_analysis = { path = "path/to/your/text_analysis" }
+```
+
 ---
 
 ## Usage
 
 ```sh
-text_analysis <path> [--stopwords stoplist.txt] [--ngram N] [--context N] [--export-format FORMAT] [--entities-only]
+text_analysis <path> [--stopwords FILE] [--ngram N] [--context N] [--export-format FORMAT] [--entities-only] [--combine] [--stem] [--stem-lang LANG]
 ```
 
 * `<path>`: file or directory (recursively scans for `.txt` and `.pdf`)
-* `--stopwords <file>`: (optional) additional stopword list (one word per line)
+* `--stopwords <file>`: (optional) stopword list file (one word per line; if not provided, no stopword filtering is applied)
 * `--ngram N`: (optional, default: 2) N-gram size (e.g. 2 = bigrams, 3 = trigrams)
 * `--context N`: (optional, default: 5) context window size (N = ±N words)
 * `--export-format FORMAT`: `txt` (default), `csv`, `tsv`, or `json` (exports results as separate files)
 * `--entities-only`: only export named entities (names), not full statistics
-* `--combine`: Analyze all files together and output combined result files
+* `--combine`: analyze all files together and output combined result files
+* `--stem`: enable stemming (based on detected language)
+* `--stem-lang LANG`: override language for stemming (e.g. `en`, `de`, `fr`, `it`, `es`, `pt`, `nl`, `ru`, `sv`, `fi`, `no`, `ro`, `hu`, `da`, `tr`); ignored if `--stem` is not set
 
-By default, each file is analyzed and exported individually.
-With --combine, all files are analyzed as a single corpus and combined result files are exported.
-
-**During analysis, a progress bar and the current file being read are shown in the terminal.**
+By default, each file is analyzed and exported individually.  
+With `--combine`, all files are analyzed as a single corpus and combined result files are exported.
 
 Example:
 
 ```sh
-text_analysis ./my_corpus/ --stopwords my_stoplist.txt --ngram 3 --context 4 --export-format csv
+text_analysis ./my_corpus/ --stopwords my_stoplist.txt --ngram 3 --context 4 --export-format csv --stem
 ```
 
 ---
 
 ## Output Example
 
-The output file and stdout print N-gram statistics **first**, then per-word frequency and context, then named entities, then PMI collocations.
+The output (and stdout summary) prints N-gram statistics **first**, then per-word frequency and context, then named entities, then PMI collocations.
 
 ```txt
-=== N-gram Analysis (N=3) ===
+=== N-gram Analysis ===
 Ngram: "the quick brown" — Count: 18
 Ngram: "quick brown fox" — Count: 18
 Ngram: "brown fox jumps" — Count: 17
@@ -123,45 +128,39 @@ Warning: The following files could not be read:
 
 **Exported Files:**
 
-The output files now start with the analyzed filename, followed by the analysis type and a timestamp. For example:
+Output files are named with the input filename, a timestamp, and the analysis type. For example:
 
-- `mytext_wordfreq_20250803_191010.csv`
-- `mytext_ngrams_20250803_191010.csv`
-- `mytext_namedentities_20250803_191010.csv`
-- `mytext_pmi_20250803_191010.csv`
+- `mytext_20250803_191010_wordfreq.csv`
+- `mytext_20250803_191010_ngrams.csv`
+- `mytext_20250803_191010_namedentities.csv`
+- `mytext_20250803_191010_pmi.csv`
 
 When using combined analysis (`--combine`):
 
-- `combined_wordfreq_20250803_191010.csv`
-- `combined_ngrams_20250803_191010.csv`
+- `combined_20250803_191010_wordfreq.csv`
+- `combined_20250803_191010_ngrams.csv`
 - etc.
 
-The exact file naming scheme is:  
-`<filename>_<analysis-type>_<timestamp>.<ext>`
+The file naming scheme is:  
+`<filename>_<timestamp>_<analysis-type>.<ext>`
 
 ---
 
-
 ## Using as a Library
 
-This crate can be used directly in your own Rust projects for fast multi-language text analysis.  
-You get all core functions, including n-gram extraction, frequency analysis, collocation statistics (PMI), and automatic or custom stopword support.
+You get all core functions, including n-gram extraction, frequency analysis, collocation statistics (PMI), custom stopword support, and optional stemming.
 
-Add to your `Cargo.toml`:
-```toml
-[dependencies]
-text_analysis = { path = "path/to/your/text_analysis" }
-```
-
-### Example 1: Analyze a Text for English Bigrams
+### Example 1: Analyze English Bigrams (no stopwords, no stemming)
 
 ```rust
+use std::collections::HashSet;
 use text_analysis::*;
 
 fn main() {
     let text = "The quick brown fox jumps over the lazy dog. The fox was very quick!";
-    let stopwords = default_stopwords_for_language("en");
-    let result = analyze_text(text, &stopwords, 2, 2); // bigrams, window = 2
+    let stopwords: HashSet<String> = HashSet::new();
+    let options = AnalysisOptions { ngram: 2, context: 2, stemming: StemMode::Off };
+    let result = analyze_text_with(text, &stopwords, &options);
 
     println!("Top 3 bigrams:");
     for (ngram, count) in result.ngrams.iter().take(3) {
@@ -170,29 +169,30 @@ fn main() {
 }
 ```
 
-### Example 2: Frequency and Named Entity Extraction for German
+### Example 2: Frequency and Named Entities for German with Stemming
 
 ```rust
+use std::collections::HashSet;
 use text_analysis::*;
 
 fn main() {
     let text = "Goethe schrieb den Faust. Faust ist ein Klassiker der deutschen Literatur.";
-    let stopwords = default_stopwords_for_language("de");
-    let result = analyze_text(text, &stopwords, 1, 2); // unigrams, window = 2
+    let stopwords: HashSet<String> = HashSet::new();
+    let options = AnalysisOptions { ngram: 1, context: 2, stemming: StemMode::Auto };
+    let result = analyze_text_with(text, &stopwords, &options);
 
     println!("Most frequent words:");
     for (word, count) in result.wordfreq.iter().take(5) {
         println!("{}: {}", word, count);
     }
-    println!("
-Named entities:");
+    println!("\nNamed entities:");
     for (entity, count) in result.named_entities.iter() {
         println!("{}: {}", entity, count);
     }
 }
 ```
 
-### Example 3: PMI Collocation Extraction with Custom Stopwords
+### Example 3: PMI Collocations with Custom Stopwords (no stemming)
 
 ```rust
 use std::collections::HashSet;
@@ -202,7 +202,8 @@ fn main() {
     let text = "Alice loves Bob. Bob loves Alice. Alice and Bob are friends.";
     let mut stopwords = HashSet::new();
     for w in ["and", "are", "loves"] { stopwords.insert(w.to_string()); }
-    let result = analyze_text(text, &stopwords, 1, 2); // unigrams, window = 2
+    let options = AnalysisOptions { ngram: 1, context: 2, stemming: StemMode::Off };
+    let result = analyze_text_with(text, &stopwords, &options);
 
     println!("PMI pairs (min_count=5):");
     for entry in result.pmi.iter().take(5) {
@@ -213,15 +214,26 @@ fn main() {
 
 ---
 
-**Tip:**  
-All functions work with any Unicode text.
+## Named-Entity Heuristic (how it works)
+
+The current NER is a **simple capitalization heuristic**:
+
+1. Split the original (non-stemmed) text into tokens.
+2. A token is counted as a candidate entity if:
+   - it starts with an uppercase letter (Unicode-aware), and
+   - it is **not** fully uppercase (to avoid acronyms) and
+   - it is **not** the very first token of a sentence if it is a common function word (e.g. English “The”).  
+3. Candidates are aggregated case-sensitively (so “Berlin” and “BERLIN” are treated differently).
+
+> Note: This heuristic is language-agnostic and will overgenerate in some cases (sentence-initial words). It is intentionally **fast** and **deterministic**. For higher quality, consider post-filtering with custom lists or integrating a proper NER model.
 
 ---
 
 ## Scientific Features & Best Practices
 
-* Language-aware stemming and stopwords for English, German, French, Spanish, Italian, Arabic
-* Optional additional stoplist (e.g. for project-specific terms)
+* Multi-language support: automatic language detection for English, German, French, Spanish, Italian, Arabic
+* Optional stemming for many languages (e.g., en, de, fr, es, it, pt, nl, ru, sv, fi, no, ro, hu, da, tr)
+* Optional custom stoplist (e.g. to filter project-specific terms)
 * N-gram and co-occurrence analysis for computational linguistics or stylometry
 * Collocation statistics with mutual information (PMI)
 * Configurable context window size (±N words)
@@ -240,10 +252,10 @@ All functions work with any Unicode text.
 * [x] Named Entity detection (heuristic)
 * [x] Collocation/PMI output
 * [x] CSV/JSON export
-* [x] Robust error handling & test coverage
-* [ ] Lemmatization for more languages (if crates become available)
-* [ ] Option for context window size (CLI flag)
+* [x] Context window size (CLI flag)
 * [ ] Parallel file analysis for very large corpora
+* [ ] Built-in default stoplists per language (optional)
+* [ ] Lemmatization for more languages (if crates become available)
 * [ ] More advanced reporting (collocation metrics, word clouds)
 
 Contributions welcome, especially for more languages, better PDF/docx parsing, or improved output!
@@ -258,4 +270,4 @@ MIT
 
 ## Feedback & Issues
 
-Feedback, bug reports, and pull requests are highly appreciated! Open an [Issue](https://github.com/ArdentEmpiricist/text_analysis/issues) or [start a discussion](https://github.com/ArdentEmpiricist/text_analysis/discussions).
+Feedback, bug reports, and pull requests are highly appreciated! Open an Issue or start a discussion.

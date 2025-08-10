@@ -4,119 +4,116 @@
 )]
 //! # Text Analysis CLI
 //!
-//! This is the command-line interface for the `text_analysis` crate.
-//! It provides a convenient way to run N-gram, context, and entity analysis
-//! on `.txt` and `.pdf` documents without writing Rust code.
+//! Command-line interface for the `text_analysis` library. Runs n‑gram, context
+//! statistics, named entity extraction and PMI collocations over `.txt` and `.pdf` inputs.
 //!
-//! ## Features
-//! - Analyze each file individually or all files combined.
-//! - Export results in multiple formats.
-//! - Configure N-gram size, context window, and optional stopword list.
-//! - Named entity extraction mode.
+//! ## Highlights
+//! - Analyze single files or combine a whole folder (no double scanning of files).
+//! - Export to TXT/CSV/TSV/JSON.
+//! - Configurable n‑gram size and ±context window.
+//! - Optional: custom stopword list, stemming (auto via language detection or forced).
+//! - Entities-only export mode.
 //!
-//! ## Example
-//! ```bash
-//! cargo run --release -- path/to/data --ngram 3 --context 5 --export-format csv
-//! ```
-//!
-//! See `--help` for all available options.
+//! See README for details.
 
 use clap::{Parser, ValueEnum};
-use env_logger;
-use log::error;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process;
-use text_analysis::{
-    ExportFormat, analyze_path, analyze_path_combined, collect_files, print_failed_files,
-};
 
-#[derive(Parser)]
-#[command(author, version, about)]
+use text_analysis::{AnalysisOptions, ExportFormat, StemLang, StemMode, analyze_path};
+
+/// Text_Analysis — fast multilingual text CLI
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
 struct Cli {
-    /// File or directory to analyze
-    path: String,
+    /// File or directory (recursively analyzed)
+    path: PathBuf,
 
-    /// Optional path to additional stopword file (.txt, one word per line)
+    /// Optional stopword list (one word per line)
     #[arg(long)]
-    stopwords: Option<String>,
+    stopwords: Option<PathBuf>,
 
-    /// Size of N for N-gram analysis (e.g. 2 for bigrams, 3 for trigrams)
+    /// N-gram size (2 = bigrams, 3 = trigrams, ...)
     #[arg(long, default_value_t = 2)]
     ngram: usize,
 
-    /// Context window size for collocation (e.g. 5 = ±5)
+    /// Context window size (±N words)
     #[arg(long, default_value_t = 5)]
     context: usize,
 
-    /// Output format for export (txt, csv, tsv, json)
-    #[arg(long, default_value = "txt")]
-    export_format: ExportFormat,
+    /// Export format
+    #[arg(long, value_enum, default_value_t = CliExportFormat::Txt)]
+    export_format: CliExportFormat,
 
-    /// Export only named entities (names) (default: false)
+    /// Export only named entities (instead of full statistics)
     #[arg(long, default_value_t = false)]
     entities_only: bool,
 
-    /// If set, analyze all files together and output combined results
+    /// Combine all files into one corpus
     #[arg(long, default_value_t = false)]
     combine: bool,
+
+    /// Enable stemming (language auto-detected)
+    #[arg(long, default_value_t = false)]
+    stem: bool,
+
+    /// Force stemming language (e.g., en, de, fr, es, it, pt, nl, ru, sv, fi, no, ro, hu, da, tr)
+    #[arg(long)]
+    stem_lang: Option<String>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
+enum CliExportFormat {
+    Txt,
+    Csv,
+    Tsv,
+    Json,
+}
+
+impl From<CliExportFormat> for ExportFormat {
+    fn from(v: CliExportFormat) -> Self {
+        match v {
+            CliExportFormat::Txt => ExportFormat::Txt,
+            CliExportFormat::Csv => ExportFormat::Csv,
+            CliExportFormat::Tsv => ExportFormat::Tsv,
+            CliExportFormat::Json => ExportFormat::Json,
+        }
+    }
 }
 
 fn main() {
-    env_logger::init();
     let cli = Cli::parse();
 
-    if cli.combine {
-        // Combine mode: Analyze all files jointly and export one combined result set
-        match analyze_path_combined(
-            &cli.path,
-            cli.stopwords.clone(),
-            cli.ngram,
-            cli.context,
-            cli.export_format,
-            cli.entities_only,
-        ) {
-            Ok(report) => {
-                if !cli.entities_only {
-                    println!("{}", report.result);
-                }
-                if !report.failed_files.is_empty() {
-                    print_failed_files(&report.failed_files);
-                }
-            }
-            Err(e) => {
-                error!("Error: {}", e);
-                process::exit(1);
-            }
+    // Determine stemming mode from CLI flags.
+    let stem_mode = if let Some(code) = cli.stem_lang.as_deref() {
+        // Explicit language wins, but only if --stem is set.
+        if cli.stem {
+            StemMode::Force(StemLang::from_code(code).unwrap_or(StemLang::Unknown))
+        } else {
+            StemMode::Off
         }
+    } else if cli.stem {
+        StemMode::Auto
     } else {
-        // Default mode: Analyze each file separately and output results per file
-        let files = collect_files(Path::new(&cli.path));
-        let mut any_errors = false;
-        for file in files {
-            match analyze_path(
-                &file,
-                cli.stopwords.clone(),
-                cli.ngram,
-                cli.context,
-                cli.export_format,
-                cli.entities_only,
-            ) {
-                Ok(report) => {
-                    if !cli.entities_only {
-                        println!("{}", report.result);
-                    }
-                    if !report.failed_files.is_empty() {
-                        print_failed_files(&report.failed_files);
-                        any_errors = true;
-                    }
-                }
-                Err(e) => {
-                    error!("Error analyzing {}: {}", file, e);
-                    any_errors = true;
-                }
-            }
+        StemMode::Off
+    };
+
+    let options = AnalysisOptions {
+        ngram: cli.ngram,
+        context: cli.context,
+        export_format: cli.export_format.into(),
+        entities_only: cli.entities_only,
+        combine: cli.combine,
+        stem_mode,
+    };
+
+    match analyze_path(&cli.path, cli.stopwords.as_ref(), &options) {
+        Ok(report) => {
+            // Human-readable summary. Detailed data is written to files or stdout depending on format.
+            eprintln!("{}", report.summary);
         }
-        if any_errors {
+        Err(e) => {
+            eprintln!("Error: {e}");
             process::exit(1);
         }
     }

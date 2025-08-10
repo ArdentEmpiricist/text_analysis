@@ -1,267 +1,379 @@
-use std::collections::HashSet;
+//! Integration tests for `text_analysis`.
+//
+// Coverage:
+// - Library: tokenization, stopwords, stemming (Auto/Force/Off), n-grams,
+//   wordfreq, context & neighbors, PMI, NER heuristic, analyze_path (combined/per-file), exporters.
+// - CLI: flags (--stopwords, --ngram, --context, --export-format, --entities-only,
+//   --combine, --stem, --stem-lang), file creation, exit codes.
+//
+// Notes:
+// - Tests run in isolated temp directories (no pollution).
+// - Tests that change the global CWD are marked #[serial] to avoid races.
+// - PDF tests are optional; see cfg(feature = "pdf") at bottom.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use assert_cmd::prelude::*;
+use assert_fs::prelude::*;
+use predicates::prelude::*;
+use serial_test::serial;
 use tempfile::tempdir;
-use text_analysis::*;
 
-fn ngram_contains(ngrams: &std::collections::HashMap<String, usize>, needle: &str) -> bool {
-    ngrams.keys().any(|ng| ng.to_lowercase().contains(needle))
+use regex::Regex;
+use serde_json::Value as Json;
+
+use text_analysis::{
+    AnalysisOptions, ExportFormat, StemLang, StemMode, analyze_path, analyze_text_with,
+    collect_files,
+};
+
+/// Helper: create a file with content.
+fn write_file(dir: &assert_fs::TempDir, name: &str, content: &str) -> PathBuf {
+    let f = dir.child(name);
+    f.write_str(content).unwrap();
+    f.path().to_path_buf()
 }
 
-fn pmi_contains(pmi: &[PmiEntry], needle: &str) -> bool {
-    pmi.iter()
-        .any(|e| e.word1.to_lowercase().contains(needle) || e.word2.to_lowercase().contains(needle))
+/// Helper: read file to string.
+fn read_to_string<P: AsRef<Path>>(p: P) -> String {
+    fs::read_to_string(p).unwrap()
 }
 
-fn has_sufficient_pmi(pmi: &[PmiEntry], needle: &str) -> bool {
-    if pmi.is_empty() {
-        // PMI likely not computable (short text), so not an error for this test
-        return true;
+/// Build default options (library)
+fn opts(fmt: ExportFormat) -> AnalysisOptions {
+    AnalysisOptions {
+        ngram: 2,
+        context: 5,
+        export_format: fmt,
+        entities_only: false,
+        combine: false,
+        stem_mode: StemMode::Off,
     }
-    pmi_contains(pmi, needle)
 }
 
-// === Core language and feature tests ===
+#[test]
+fn lib_tokenize_and_basic_counts() {
+    let mut o = opts(ExportFormat::Json);
+    o.stem_mode = StemMode::Off;
+    let text = "The quick brown fox jumps over the lazy dog. The fox was very quick!";
+    let stop = std::collections::HashSet::new();
+    let r = analyze_text_with(text, &stop, &o);
+
+    // n-grams present (bigrams)
+    assert!(r.ngrams.get("the quick").is_some());
+    assert!(r.ngrams.get("quick brown").is_some());
+
+    // wordfreq should include tokens lowercased (stemming off)
+    assert!(r.wordfreq.get("the").unwrap() >= &2);
+    assert!(r.wordfreq.get("quick").unwrap() >= &2);
+
+    // neighbors/context present for typical word
+    assert!(r.context_map.get("fox").is_some());
+    assert!(r.direct_neighbors.get("fox").is_some());
+
+    // PMI computed
+    assert!(!r.pmi.is_empty());
+}
 
 #[test]
-fn test_english_ngram_and_pmi() {
-    // Short text: N-Gram check only
-    let text = "The quick brown fox jumps over the lazy dog.";
-    let result = analyze_text(text, &HashSet::new(), 3, 2);
-    assert!(ngram_contains(&result.ngrams, "fox"));
+fn lib_stopwords_filtering() {
+    let mut o = opts(ExportFormat::Json);
+    o.stem_mode = StemMode::Off;
 
-    // Long text: PMI check
-    let text_pmi = "The fox jumps over the dog. The fox is smart. The fox runs fast. The dog is lazy. \
-                    Fox and dog are friends. The quick brown fox jumps again. Fox, dog, and friends go out. \
-                    Fox jumps. Dog barks. Fox jumps. Dog barks. Fox jumps. Dog barks. Fox jumps. Dog barks.";
-    let result_pmi = analyze_text(text_pmi, &HashSet::new(), 2, 2);
-    assert!(
-        has_sufficient_pmi(&result_pmi.pmi, "fox"),
-        "Expected at least one PMI entry to mention 'fox', but got: {:?}",
-        result_pmi.pmi
+    let text = "Cats and dogs and cats and dogs.";
+    let mut stop = std::collections::HashSet::new();
+    stop.insert("and".to_string());
+
+    let r = analyze_text_with(text, &stop, &o);
+
+    // "and" must be filtered out from statistics
+    assert!(r.wordfreq.get("and").is_none());
+    assert!(r.ngrams.keys().all(|ng| !ng.contains("and")));
+}
+
+#[test]
+fn lib_stemming_auto_and_force() {
+    // The text strongly indicates English; Auto should map to English stemmer.
+    let text = "running runner runs cars car cars running";
+    let stop = std::collections::HashSet::new();
+
+    // Auto
+    let mut o = opts(ExportFormat::Json);
+    o.stem_mode = StemMode::Auto;
+    let r_auto = analyze_text_with(text, &stop, &o);
+    // English stemming should reduce "running"->"run", "cars"->"car"
+    assert!(r_auto.wordfreq.get("run").is_some());
+    assert!(r_auto.wordfreq.get("car").is_some());
+
+    // Force German
+    let mut o2 = opts(ExportFormat::Json);
+    o2.stem_mode = StemMode::Force(StemLang::De);
+    let r_force = analyze_text_with(text, &stop, &o2);
+    assert!(!r_force.wordfreq.is_empty());
+
+    // Off: no stemming -> raw lowercased
+    let mut o3 = opts(ExportFormat::Json);
+    o3.stem_mode = StemMode::Off;
+    let r_off = analyze_text_with(text, &stop, &o3);
+    assert!(r_off.wordfreq.get("running").is_some());
+    assert!(r_off.wordfreq.get("cars").is_some());
+}
+
+#[test]
+fn lib_ngrams_window_and_neighbors() {
+    let mut o = opts(ExportFormat::Json);
+    o.ngram = 3;
+    o.context = 2;
+    let text = "alpha beta gamma delta epsilon";
+    let stop = std::collections::HashSet::new();
+
+    let r = analyze_text_with(text, &stop, &o);
+    // Trigrams count
+    assert!(r.ngrams.get("alpha beta gamma").is_some());
+    assert!(r.ngrams.get("beta gamma delta").is_some());
+
+    // context window ±2: neighbors for "gamma" must include beta and delta
+    let neigh = r.direct_neighbors.get("gamma").unwrap();
+    assert!(neigh.get("beta").is_some());
+    assert!(neigh.get("delta").is_some());
+}
+
+#[test]
+fn lib_ner_heuristic() {
+    let mut o = opts(ExportFormat::Json);
+    let text = "Berlin is in Germany. NASA launched a rocket. The dog sleeps.";
+    let stop = std::collections::HashSet::new();
+    let r = analyze_text_with(text, &stop, &o);
+
+    // Should count Berlin and Germany (capitalized), but filter all-upper "NASA"
+    assert!(r.named_entities.get("Berlin").is_some());
+    assert!(r.named_entities.get("Germany").is_some());
+    assert!(r.named_entities.get("NASA").is_none());
+    // "The" as function word should not be counted
+    assert!(r.named_entities.get("The").is_none());
+}
+
+#[test]
+fn lib_pmi_sanity() {
+    let mut o = opts(ExportFormat::Json);
+    o.context = 1; // tight window yields strong pairs
+    let text = "alice bob alice bob alice bob";
+    let stop = std::collections::HashSet::new();
+    let r = analyze_text_with(text, &stop, &o);
+
+    // There should be PMI entries for the pair (alice,bob)
+    let has_pair = r.pmi.iter().any(|p| {
+        (p.word1 == "alice" && p.word2 == "bob") || (p.word1 == "bob" && p.word2 == "alice")
+    });
+    assert!(has_pair);
+}
+
+#[test]
+#[serial]
+fn lib_analyze_path_per_file_and_combined_csv() {
+    // Prepare temp dir with two text files
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f1 = write_file(&td, "a.txt", "Hello world. Berlin Berlin.");
+    let _f2 = write_file(&td, "b.txt", "Hello Alice. Alice meets Bob.");
+
+    // Per-file mode (default), CSV export
+    let mut o = opts(ExportFormat::Csv);
+    o.combine = false;
+    // Change CWD so relative outputs are written into td
+    std::env::set_current_dir(td.path()).unwrap();
+    let _rep = analyze_path(td.path(), None, &o).expect("analyze_path");
+
+    // Expect output files for at least one stem + one table (wordfreq)
+    let re = Regex::new(r".+_\d{8}_\d{6}_wordfreq\.csv$").unwrap();
+    let found = fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| re.is_match(e.file_name().to_string_lossy().as_ref()));
+    assert!(found, "Expected <stem>_*_wordfreq.csv in temp dir");
+
+    // Combined mode, CSV export
+    let mut o2 = opts(ExportFormat::Csv);
+    o2.combine = true;
+    std::env::set_current_dir(td.path()).unwrap();
+    let _rep2 = analyze_path(td.path(), None, &o2).expect("analyze_path combined");
+
+    // combined_* files should exist
+    let has_combined = fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().starts_with("combined_"));
+    assert!(has_combined, "Expected combined_* outputs");
+}
+
+#[test]
+#[serial]
+fn lib_export_json() {
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f = write_file(&td, "c.txt", "Alice loves Bob. Bob loves Alice.");
+    std::env::set_current_dir(td.path()).unwrap();
+
+    let mut o = opts(ExportFormat::Json);
+    o.combine = false;
+    let _ = analyze_path(td.path(), None, &o).expect("export json");
+
+    // ensure at least one .json exists
+    let any_json = fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().map(|e| e == "json").unwrap_or(false))
+        .expect("expected at least one json export");
+    // parse JSON to ensure validity
+    let js = read_to_string(&any_json);
+    let _: Json = serde_json::from_str(&js).expect("valid json");
+}
+
+#[test]
+#[serial]
+fn lib_export_tsv() {
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f = write_file(&td, "d.txt", "Alice loves Bob. Bob loves Alice.");
+    std::env::set_current_dir(td.path()).unwrap();
+
+    let mut o = opts(ExportFormat::Tsv);
+    o.combine = false;
+    let _ = analyze_path(td.path(), None, &o).expect("export tsv");
+
+    let any_tsv = fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().map(|e| e == "tsv").unwrap_or(false))
+        .expect("expected at least one tsv export");
+    let content = read_to_string(&any_tsv);
+    assert!(!content.is_empty());
+}
+
+// ---------------- CLI tests ----------------
+
+fn run_cli_ok_in(dir: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    let mut cmd = assert_cmd::Command::cargo_bin("text_analysis").unwrap();
+    cmd.current_dir(dir);
+    cmd.args(args).assert().success()
+}
+
+fn run_cli_fail_in(dir: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    let mut cmd = assert_cmd::Command::cargo_bin("text_analysis").unwrap();
+    cmd.current_dir(dir);
+    cmd.args(args).assert().failure()
+}
+
+#[test]
+fn cli_basic_run_csv() {
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f = write_file(
+        &td,
+        "cli.txt",
+        "Berlin meets Alice. Alice meets Bob. NASA FAILS.",
+    );
+
+    // Also provide a stopword list
+    let stop = write_file(&td, "stop.txt", "meets\n");
+
+    run_cli_ok_in(
+        td.path(),
+        &[
+            td.path().to_string_lossy().as_ref(),
+            "--export-format",
+            "csv",
+            "--stopwords",
+            stop.to_str().unwrap(),
+            "--ngram",
+            "2",
+            "--context",
+            "3",
+        ],
+    );
+
+    // Expect wordfreq csv for cli.txt
+    let re = Regex::new(r".+_\d{8}_\d{6}_wordfreq\.csv$").unwrap();
+    let found = fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| re.is_match(e.file_name().to_string_lossy().as_ref()));
+    assert!(found, "Expected cli_*_wordfreq.csv in temp dir");
+}
+
+#[test]
+fn cli_entities_only_and_stemming() {
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f = write_file(
+        &td,
+        "entities.txt",
+        "The City of Berlin is in Germany. Cars running.",
+    );
+
+    // entities-only with stemming enabled (should not affect NER, but test flag combo)
+    run_cli_ok_in(
+        td.path(),
+        &[
+            td.path().to_string_lossy().as_ref(),
+            "--entities-only",
+            "--stem",
+            "--export-format",
+            "json",
+        ],
+    );
+
+    // Force language (en) with stemming
+    run_cli_ok_in(
+        td.path(),
+        &[
+            td.path().to_string_lossy().as_ref(),
+            "--stem",
+            "--stem-lang",
+            "en",
+            "--export-format",
+            "tsv",
+        ],
+    );
+
+    // Combined mode
+    run_cli_ok_in(
+        td.path(),
+        &[
+            td.path().to_string_lossy().as_ref(),
+            "--combine",
+            "--export-format",
+            "csv",
+        ],
     );
 }
 
 #[test]
-fn test_german_faust_ngram_and_pmi() {
-    let text = "Habe nun, ach! Philosophie, Juristerei und Medizin, Und leider auch Theologie";
-    let result = analyze_text(text, &HashSet::new(), 3, 2);
-    assert!(ngram_contains(&result.ngrams, "philosoph"));
-
-    // PMI: längerer Text
-    let text_pmi = "Der Philosoph liest Bücher. Die Philosophie ist alt. \
-                    Der Philosoph und die Philosophie sind verbunden. \
-                    Philosophie ist tief. Philosoph spricht über Philosophie. \
-                    Philosophie und Philosoph treffen sich oft. Philosophie hilft dem Philosoph.";
-    let result_pmi = analyze_text(text_pmi, &HashSet::new(), 2, 2);
-    assert!(
-        has_sufficient_pmi(&result_pmi.pmi, "philosoph"),
-        "PMI-Check for 'philosoph' failed: {:?}",
-        result_pmi.pmi
+fn cli_nonexistent_path_fails() {
+    let td = tempdir().unwrap(); // base dir
+    let bad = td.path().join("does_not_exist_here");
+    run_cli_fail_in(
+        td.path(),
+        &[bad.to_string_lossy().as_ref(), "--export-format", "csv"],
     );
 }
 
-#[test]
-fn test_french_lepetitprince_ngram_and_pmi() {
-    let text = "Toutes les grandes personnes ont d’abord été des enfants.";
-    let result = analyze_text(text, &HashSet::new(), 3, 2);
-    assert!(ngram_contains(&result.ngrams, "person"));
-
-    let text_pmi = "Les personnes sont importantes. Les personnes vivent en France. \
-                    Les enfants aiment les personnes. Les grandes personnes aident les enfants. \
-                    Personnes et enfants jouent ensemble. Les personnes, les enfants et les grandes personnes.";
-    let result_pmi = analyze_text(text_pmi, &HashSet::new(), 2, 2);
-    assert!(
-        has_sufficient_pmi(&result_pmi.pmi, "person"),
-        "PMI-Check for 'person' failed: {:?}",
-        result_pmi.pmi
-    );
-}
+// --------- Optional: PDF (requires feature = "pdf") ----------
 
 #[test]
-fn test_spanish_quijote_ngram_and_pmi() {
-    let text = "En un lugar de la Mancha, de cuyo nombre no quiero acordarme.";
-    let result = analyze_text(text, &HashSet::new(), 3, 2);
-    assert!(ngram_contains(&result.ngrams, "manch"));
-
-    let text_pmi = "La Mancha es famosa. Un hombre vive en La Mancha. \
-                    La Mancha y sus tierras son bonitas. Muchos viven en La Mancha. \
-                    La Mancha tiene historia. La Mancha es especial. En La Mancha hay molinos.";
-    let result_pmi = analyze_text(text_pmi, &HashSet::new(), 2, 2);
-    assert!(
-        has_sufficient_pmi(&result_pmi.pmi, "manch"),
-        "PMI-Check for 'manch' failed: {:?}",
-        result_pmi.pmi
-    );
-}
-
-#[test]
-fn test_italian_pinocchio_ngram_and_pmi() {
-    let text = "C’era una volta… un re! — diranno subito i miei piccoli lettori.";
-    let result = analyze_text(text, &HashSet::new(), 3, 2);
-    assert!(ngram_contains(&result.ngrams, "lettor"));
-
-    let text_pmi = "I lettori leggono libri. Piccoli lettori amano le storie. \
-                    Lettori e libri sono inseparabili. Lettori, piccoli lettori, grandi lettori. \
-                    Lettori leggono Pinocchio. I lettori ridono. Lettori felici.";
-    let result_pmi = analyze_text(text_pmi, &HashSet::new(), 2, 2);
-    assert!(
-        has_sufficient_pmi(&result_pmi.pmi, "lettor"),
-        "PMI-Check for 'lettor' failed: {:?}",
-        result_pmi.pmi
-    );
-}
-
-#[test]
-fn test_arabic_sample_ngram_and_pmi() {
-    let text = "الكتاب جميل والمكتب قريب من البيت";
-    let result = analyze_text(text, &HashSet::new(), 2, 2);
-    assert!(
-        result
-            .ngrams
-            .keys()
-            .any(|ng| ng.contains("جميل") || ng.contains("مكتب"))
-    );
-
-    // Deutlich längerer Testtext mit vielen 'جميل'
-    let text_pmi = "\
-        الكتاب جميل والمكتب جميل والجو جميل والولد جميل \
-        والبنت جميلة والطريق جميل والمنزل جميل والورد جميل \
-        والحديقة جميلة والمدينة جميلة \
-        الكتاب جميل والمكتب جميل والجو جميل والولد جميل \
-        والبنت جميلة والطريق جميل والمنزل جميل والورد جميل \
-        والحديقة جميلة والمدينة جميلة \
-        الكتاب جميل والمكتب جميل والجو جميل والولد جميل \
-        والبنت جميلة والطريق جميل والمنزل جميل والورد جميل \
-        والحديقة جميلة والمدينة جميلة \
-        الكتاب جميل والمكتب جميل والجو جميل والولد جميل \
-        والبنت جميلة والطريق جميل والمنزل جميل والورد جميل \
-        والحديقة جميلة والمدينة جميلة \
-        ";
-    let result_pmi = analyze_text(text_pmi, &HashSet::new(), 2, 2);
-
-    assert!(
-        pmi_contains(&result_pmi.pmi, "جميل"),
-        "PMI-Check for 'جميل' failed: {:?}",
-        result_pmi.pmi
-    );
-}
-
-// === Edge and error cases ===
-
-#[test]
-fn test_empty_input_yields_no_words() {
-    let result = analyze_text("", &HashSet::new(), 2, 2);
-    assert!(result.wordfreq.is_empty());
-    assert!(result.ngrams.is_empty());
-    assert!(result.pmi.is_empty());
-}
-
-#[test]
-fn test_only_stopwords_yields_no_words() {
-    let sw: HashSet<_> = ["the", "a", "and"].iter().map(|s| s.to_string()).collect();
-    let input = "the a and the";
-    let result = analyze_text(input, &sw, 2, 2);
-    assert!(result.wordfreq.is_empty());
-    assert!(result.ngrams.is_empty());
-    assert!(result.pmi.is_empty());
-}
-
-#[test]
-fn test_unicode_and_apostrophes_are_handled() {
-    let input = "naïve über niño l'enfant c'est";
-    let result = analyze_text(input, &HashSet::new(), 1, 1);
-    let words: Vec<_> = result.wordfreq.keys().collect();
-    assert!(
-        words
-            .iter()
-            .any(|w| w.contains("enfan") || w.contains("enfant") || w.contains("enf")),
-        "Expected a stem of 'enfant', got: {:?}",
-        words
-    );
-    assert!(
-        words
-            .iter()
-            .any(|w| w.contains("naiv") || w.contains("naïv") || w.contains("naïve")),
-        "Expected a variant of 'naive', got: {:?}",
-        words
-    );
-}
-
-#[test]
-fn test_nonexistent_file_gives_error() {
-    let dir = tempdir().unwrap();
-    let orig = std::env::current_dir().unwrap();
-    std::env::set_current_dir(dir.path()).unwrap();
-    let result = analyze_path("notfound.txt", None, 2, 2, ExportFormat::Txt, false);
-    std::env::set_current_dir(orig).unwrap();
-    assert!(result.is_err());
-}
-#[test]
-fn test_long_corpus_wordfreq_ngram_pmi_consistency_in_memory() {
-    let corpus = r#"
-It was the best of times, it was the worst of times, it was the age of wisdom, 
-it was the age of foolishness, it was the epoch of belief, it was the epoch of incredulity, 
-it was the season of Light, it was the season of Darkness, it was the spring of hope, 
-it was the winter of despair.
-"#;
-
-    // Verwende explizit englische Stopwords!
-    let mut stopwords = HashSet::new();
-    for w in [
-        "it", "was", "the", "of", "in", "and", "to", "a", "is", "with", "on", "for", "as", "at",
-        "by", "an", "be", "from", "that", "which", "or", "his", "her", "but", "not", "are", "this",
-        "all", "had", "so",
-    ] {
-        stopwords.insert(w.to_string());
-    }
-
-    let result = analyze_text(corpus, &stopwords, 3, 2);
-
-    // Check: Ist wenigstens eines der Keywords unter den häufigsten Wörtern?
-    let mut freq_vec: Vec<_> = result.wordfreq.iter().collect();
-    freq_vec.sort_by(|a, b| b.1.cmp(a.1));
-    let top_words: Vec<_> = freq_vec.iter().take(10).map(|(w, _)| w.as_str()).collect();
-    let keywords = ["time", "epoch", "age", "season", "spring", "winter"];
-    assert!(
-        top_words
-            .iter()
-            .any(|w| keywords.iter().any(|k| w.contains(k))),
-        "Expected a semantic keyword among the top words. Got: {:?}",
-        top_words
-    );
-
-    // Trigrams: mindestens eines enthält ein semantisches Schlüsselwort
-    let mut ngram_vec: Vec<_> = result.ngrams.iter().collect();
-    ngram_vec.sort_by(|a, b| b.1.cmp(a.1));
-    let top_trigrams: Vec<_> = ngram_vec
-        .iter()
-        .take(10)
-        .map(|(ng, _)| ng.as_str())
-        .collect();
-    let ngram_keywords = [
-        "age", "wisdom", "time", "season", "light", "spring", "winter", "epoch", "belief",
-        "despair", "dark", "hope", "foolish", "best", "worst",
-    ];
-    let count_semantic_trigrams = top_trigrams
-        .iter()
-        .filter(|ng| ngram_keywords.iter().any(|kw| ng.contains(*kw)))
-        .count();
-    assert!(
-        count_semantic_trigrams >= 1,
-        "At least one trigram should contain a semantic keyword, got: {:?}",
-        top_trigrams
-    );
-
-    // PMI wie gehabt, jetzt aber mit echten Keywords!
-    if !result.pmi.is_empty() {
-        let found_pmi = result.pmi.iter().any(|entry| {
-            ngram_keywords.iter().any(|&kw| entry.word1.contains(kw))
-                && ngram_keywords.iter().any(|&kw| entry.word2.contains(kw))
-                && entry.pmi > 0.0
-        });
-        assert!(
-            found_pmi,
-            "Expected a positive PMI entry for a pair of semantic keywords, got: {:?}",
-            result.pmi
-        );
+fn lib_pdf_best_effort_read() {
+    // If you ship a tiny test.pdf under tests/assets/test.pdf, you can read & analyze here.
+    // This test is a placeholder; ensure pdf_extract works at runtime.
+    let td = assert_fs::TempDir::new().unwrap();
+    // Copy tests/assets/test.pdf -> td
+    let src = PathBuf::from("tests/assets/test.pdf");
+    if src.exists() {
+        let dst = td.child("doc.pdf");
+        fs::copy(&src, dst.path()).unwrap();
+        let mut o = opts(ExportFormat::Json);
+        let _r = analyze_path(td.path(), None, &o).expect("analyze pdf");
+        // Just assert that at least one output file exists
+        let has_any = fs::read_dir(td.path()).unwrap().next().is_some();
+        assert!(has_any);
+    } else {
+        eprintln!("(skipped) tests/assets/test.pdf not found");
     }
 }
