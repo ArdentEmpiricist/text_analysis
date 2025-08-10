@@ -81,8 +81,10 @@ text_analysis <path> [--stopwords FILE] [--ngram N] [--context N] [--export-form
 * `--stem`: enable stemming (based on detected language)
 * `--stem-lang LANG`: force stemming language (`en`, `de`, `fr`, `es`, `it`, `pt`, `nl`, `ru`, `sv`, `fi`, `no`, `ro`, `hu`, `da`, `tr`); only effective with `--stem`
 
-By default, each file is analyzed and exported individually.  
-With `--combine`, all files are analyzed as a single corpus and combined result files are produced.
+> [!NOTE]
+> By default, each file is analyzed and exported individually. With --combine, all files are analyzed as a single corpus and combined result files are exported.
+
+**During analysis, a progress bar and the current file being read are shown in the terminal.**
 
 Example:
 
@@ -178,38 +180,21 @@ fn main() {
 
 ---
 
-## Named‑Entity Heuristic (how it works)
-
-The current NER is a **simple capitalization heuristic**:
-
-1. Tokenize the **original (non‑stemmed)** text.
-2. Count a token as an entity candidate if it:
-   - starts with an uppercase letter (Unicode‑aware),
-   - is **not** fully uppercase (filters acronyms like “NASA”),
-   - is **not** a common function word at sentence start (basic list).
-3. Counts are **case‑sensitive** (so “Berlin” ≠ “BERLIN”).
-
-> This heuristic is fast and deterministic and will overgenerate in some cases (e.g., sentence‑initial words). For higher quality, post‑filter with custom lists or integrate a proper NER model. NER uses original tokens; stemming affects only statistics.
+> [!TIP]
+> All functions work with any Unicode text.
 
 ---
 
 ## Scientific Features & Best Practices
 
-* Multi‑language support (whatlang)
-* Optional stemming for many languages (`rust-stemmers`)
-* Optional custom stoplists
-* N‑gram/co‑occurrence analysis for computational linguistics or stylometry
-* PMI collocations
-* Configurable context window (±N words)
-* CSV/TSV/JSON outputs easy to post‑process (R, Python/pandas, Excel)
-* Named Entities exported for downstream annotation/statistics
-* Errors and skipped files are always listed at the end
-
----
-
-## Parallel Processing
-
-Per‑file analysis is parallelized using Rayon. Input files are analyzed in parallel; writing output files is serialized to avoid I/O contention. In combined mode, files are read in parallel and then analyzed once as a single corpus.
+* Language-aware stemming for English, German, French, Spanish, Italian, Arabic
+* Optional stoplist (e.g. for project-specific terms)
+* N-gram and co-occurrence analysis for computational linguistics or stylometry
+* Collocation statistics with mutual information (PMI)
+* Configurable context window size (±N words)
+* All outputs can be processed as CSV/TSV/JSON, e.g. in R, Python, Excel, pandas, etc.
+* Named Entities exported for further annotation or statistics
+* Errors and files skipped are always listed at the end
 
 ---
 
