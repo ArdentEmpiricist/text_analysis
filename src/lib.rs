@@ -29,16 +29,16 @@
 //! `analyze_path` collects files once and then processes either combined or per-file.
 
 use chrono::Local;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-use rayon::prelude::*;
-use std::hash::{Hash, Hasher};
 use whatlang::{Lang, detect};
 
 use pdf_extract::extract_text;
+use serde_json;
 
 /// Export format
 #[derive(Copy, Clone, Debug)]
@@ -52,11 +52,8 @@ pub enum ExportFormat {
 /// Stemming control
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum StemMode {
-    /// Disable stemming
     Off,
-    /// Auto-detect language and use suitable stemmer (if available)
     Auto,
-    /// Force a specific language
     Force(StemLang),
 }
 
@@ -104,28 +101,25 @@ impl StemLang {
             _ => return None,
         })
     }
-
     pub fn from_whatlang(lang: Lang) -> Self {
-        use StemLang::*;
-        // Map via ISO-639-3 codes to be robust across whatlang versions
-        // (e.g., "nor", "nob", "nno" all map to Norwegian; "fra"/"fre" -> French).
+        // Use ISO-639-3 codes to be robust across whatlang versions
         match lang.code() {
-            "eng" => En,
-            "deu" => De,
-            "fra" | "fre" => Fr,
-            "spa" => Es,
-            "ita" => It,
-            "por" => Pt,
-            "nld" | "dut" => Nl,
-            "rus" => Ru,
-            "swe" => Sv,
-            "fin" => Fi,
-            "nor" | "nob" | "nno" => No,
-            "ron" | "rum" => Ro,
-            "hun" => Hu,
-            "dan" => Da,
-            "tur" => Tr,
-            _ => Unknown,
+            "eng" => StemLang::En,
+            "deu" => StemLang::De,
+            "fra" | "fre" => StemLang::Fr,
+            "spa" => StemLang::Es,
+            "ita" => StemLang::It,
+            "por" => StemLang::Pt,
+            "nld" | "dut" => StemLang::Nl,
+            "rus" => StemLang::Ru,
+            "swe" => StemLang::Sv,
+            "fin" => StemLang::Fi,
+            "nor" | "nob" | "nno" => StemLang::No,
+            "ron" | "rum" => StemLang::Ro,
+            "hun" => StemLang::Hu,
+            "dan" => StemLang::Da,
+            "tur" => StemLang::Tr,
+            _ => StemLang::Unknown,
         }
     }
 }
@@ -139,9 +133,12 @@ pub struct AnalysisOptions {
     pub entities_only: bool,
     pub combine: bool,
     pub stem_mode: StemMode,
+    /// If true and StemMode::Auto, require detectable/supported language
+    /// or treat file as failed (per-file) / fail the run (combined).
+    pub stem_require_detected: bool,
 }
 
-/// Compact report (large structures are written to files)
+/// Compact analysis report
 #[derive(Debug)]
 pub struct AnalysisReport {
     pub summary: String,
@@ -168,34 +165,28 @@ pub struct PmiEntry {
     pub pmi: f64,
 }
 
+// ---------- Map-Reduce structures ----------
+
 /// Partial counts for a single file (map stage output).
 #[derive(Default)]
 struct PartialCounts {
-    // tokens used for statistics (lowercased, stopwords filtered, stemmed depending on opts)
     n_tokens: usize,
-
-    // statistics
     ngrams: HashMap<String, usize>,
     wordfreq: HashMap<String, usize>,
-
-    // context within ±window (distance-agnostic): (center, neighbor) -> count
     context_pairs: HashMap<(String, String), usize>,
-
-    // direct neighbors (±1): (center, neighbor) -> count
     neighbor_pairs: HashMap<(String, String), usize>,
-
-    // co-occurrence counts by distance for PMI: (w1<=w2, distance) -> count
     cooc_by_dist: HashMap<(String, String, usize), usize>,
-
-    // NER on original (non-stemmed) tokens
     named_entities: HashMap<String, usize>,
 }
 
-/// Entry point: analyze a path (file or directory).
-/// Files are collected **once**; then either combined or per-file processing happens.
+// ---------- Public entry point ----------
+
+/// Analyze a path (file or directory).
+/// Files are collected once; per-file analysis uses parallel compute + serialized writes.
+/// Combined mode uses Map-Reduce.
 pub fn analyze_path(
     path: &Path,
-    stopwords_file: Option<&PathBuf>, // may be None
+    stopwords_file: Option<&PathBuf>,
     options: &AnalysisOptions,
 ) -> Result<AnalysisReport, String> {
     let files = collect_files(path);
@@ -204,22 +195,31 @@ pub fn analyze_path(
     }
 
     let stopwords = load_stopwords(stopwords_file);
-
     let mut failed: Vec<(String, String)> = Vec::new();
     let ts = timestamp();
 
     if options.combine {
         // --- Combined mode via Map-Reduce ---
-        // Map: read + build partial counts in parallel
         let mapped: Vec<_> = files
             .par_iter()
             .map(|f| match read_text(f) {
-                Ok(t) => Ok(partial_counts_from_text(&t, &stopwords, options)),
+                Ok(t) => {
+                    if matches!(options.stem_mode, StemMode::Auto) && options.stem_require_detected
+                    {
+                        if detect_supported_stem_lang(&t).is_none() {
+                            return Err((
+                                f.display().to_string(),
+                                "Language detection failed or unsupported for stemming (strict)"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                    Ok(partial_counts_from_text(&t, &stopwords, options))
+                }
                 Err(e) => Err((f.display().to_string(), e)),
             })
             .collect();
 
-        // Reduce: merge partials, collect failures
         let mut total = PartialCounts::default();
         let mut failed_local: Vec<(String, String)> = Vec::new();
         for item in mapped {
@@ -228,60 +228,70 @@ pub fn analyze_path(
                 Err(fe) => failed_local.push(fe),
             }
         }
+        if options.stem_require_detected && !failed_local.is_empty() {
+            let msg = format!(
+                "Combined run aborted (strict stemming): {} file(s) without detectable/supported language",
+                failed_local.len()
+            );
+            return Err(msg);
+        }
+        failed.extend(failed_local);
 
-        // Build final AnalysisResult and write outputs
         let result = analysis_from_counts(total, options);
         write_all_outputs("combined", &result, &ts, options)?;
         let summary = summary_for(&[("combined".to_string(), &result)], options);
-
-        // merge failures into outer vector
-        failed.extend(failed_local);
-        return Ok(AnalysisReport {
-            summary,
-            failed_files: failed,
-        });
-    } else {
-        // --- Per-file mode (parallel compute, serial write) ---
-        // Compute in parallel:
-        let results: Vec<_> = files
-            .par_iter()
-            .map(|f| match read_text(f) {
-                Ok(t) => {
-                    let r = analyze_text_with(&t, &stopwords, options);
-                    let stem = stem_for(f);
-                    Ok((stem, r))
-                }
-                Err(e) => Err((f.display().to_string(), e)),
-            })
-            .collect();
-
-        // Partition successes and failures:
-        let mut per_file_results: Vec<(String, AnalysisResult)> = Vec::new();
-        let mut failed: Vec<(String, String)> = Vec::new();
-        for item in results {
-            match item {
-                Ok((stem, r)) => per_file_results.push((stem, r)),
-                Err(fe) => failed.push(fe),
-            }
-        }
-
-        // Serialize writes (avoid IO contention / name races):
-        for (stem, r) in &per_file_results {
-            write_all_outputs(stem, r, &ts, options)?;
-        }
-
-        // Build summary
-        let pairs: Vec<(String, &AnalysisResult)> = per_file_results
-            .iter()
-            .map(|(n, r)| (n.clone(), r))
-            .collect();
-        let summary = summary_for(&pairs, options);
         return Ok(AnalysisReport {
             summary,
             failed_files: failed,
         });
     }
+
+    // --- Per-file mode: parallel compute, serialized writes ---
+    let results: Vec<_> = files
+        .par_iter()
+        .map(|f| match read_text(f) {
+            Ok(t) => {
+                if matches!(options.stem_mode, StemMode::Auto) && options.stem_require_detected {
+                    if detect_supported_stem_lang(&t).is_none() {
+                        return Err((
+                            f.display().to_string(),
+                            "Language detection failed or unsupported for stemming (strict)"
+                                .to_string(),
+                        ));
+                    }
+                }
+                let r = analyze_text_with(&t, &stopwords, options);
+                let stem = stem_for(f);
+                Ok((stem, r))
+            }
+            Err(e) => Err((f.display().to_string(), e)),
+        })
+        .collect();
+
+    let mut per_file_results: Vec<(String, AnalysisResult)> = Vec::new();
+    for item in results {
+        match item {
+            Ok(v) => per_file_results.push(v),
+            Err(fe) => failed.push(fe),
+        }
+    }
+
+    for (stem, r) in &per_file_results {
+        write_all_outputs(stem, r, &ts, options)?;
+    }
+
+    let pairs: Vec<(String, &AnalysisResult)> = per_file_results
+        .iter()
+        .map(|(n, r)| (n.clone(), r))
+        .collect();
+    let summary = summary_for(&pairs, options);
+    Ok(AnalysisReport {
+        summary,
+        failed_files: failed,
+    })
 }
+
+// ---------- File discovery ----------
 
 /// Recursively collect .txt/.pdf files
 pub fn collect_files(path: &Path) -> Vec<PathBuf> {
@@ -313,7 +323,8 @@ fn is_supported(p: &Path) -> bool {
     }
 }
 
-/// Read text from a file (.txt directly, .pdf via optional feature)
+// ---------- Reading & preprocessing ----------
+
 fn read_text(p: &Path) -> Result<String, String> {
     let ext = p
         .extension()
@@ -321,13 +332,12 @@ fn read_text(p: &Path) -> Result<String, String> {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "txt" => std::fs::read_to_string(p).map_err(|e| format!("Read .txt failed: {e}")),
+        "txt" => fs::read_to_string(p).map_err(|e| format!("Read .txt failed: {e}")),
         "pdf" => extract_text(p).map_err(|e| format!("PDF extract failed: {e}")),
         _ => Err("Unsupported extension".to_string()),
     }
 }
 
-/// Load stopwords (optional). It is recommended to store them in lowercase.
 fn load_stopwords(p: Option<&PathBuf>) -> HashSet<String> {
     let mut set = HashSet::new();
     if let Some(file) = p {
@@ -343,32 +353,28 @@ fn load_stopwords(p: Option<&PathBuf>) -> HashSet<String> {
     set
 }
 
-/// Analyze a text with options
+// ---------- Core analysis (per text) ----------
+
+/// Analyze a text using options (used by per-file pipeline).
 pub fn analyze_text_with(
     text: &str,
     stopwords: &HashSet<String>,
     opts: &AnalysisOptions,
 ) -> AnalysisResult {
-    // 1) Detect language (for stemming and heuristic)
-    let lang_guess = whatlang::detect(text);
+    // Determine stemming language
     let stem_lang = match opts.stem_mode {
         StemMode::Off => StemLang::Unknown,
-        StemMode::Auto => lang_guess
-            .as_ref()
+        StemMode::Force(lang) => lang,
+        StemMode::Auto => detect(text)
             .map(|i| StemLang::from_whatlang(i.lang()))
             .unwrap_or(StemLang::Unknown),
-        StemMode::Force(lang) => lang,
     };
 
-    // 2) Tokenize (keep original tokens for NER)
+    // Tokenize original and normalized
     let original_tokens = tokenize(text);
-    let sentences = split_sentences(text); // used only by the heuristic (lightweight)
-
-    // 3) Optional stemming + stopword filter for statistics path
-    //    (NER uses original_tokens, not stemmed)
+    let sentences = split_sentences(text);
     let tokens_for_stats = normalize_for_stats(&original_tokens, stopwords, stem_lang);
 
-    // 4) Statistics
     let mut result = AnalysisResult::default();
     ngrams_count(&tokens_for_stats, opts.ngram, &mut result.ngrams);
     wordfreq_count(&tokens_for_stats, &mut result.wordfreq);
@@ -396,11 +402,8 @@ fn tokenize(text: &str) -> Vec<String> {
     for ch in text.chars() {
         if ch.is_alphanumeric() || ch == '\'' {
             cur.push(ch);
-        } else {
-            if !cur.is_empty() {
-                out.push(cur);
-                cur = String::new();
-            }
+        } else if !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
         }
     }
     if !cur.is_empty() {
@@ -409,7 +412,7 @@ fn tokenize(text: &str) -> Vec<String> {
     out
 }
 
-/// Very rough sentence boundary detection (., !, ?) — used for heuristic only
+/// Rough sentence boundary detection by punctuation (., !, ?)
 fn split_sentences(text: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     let mut idx = 0usize;
@@ -430,202 +433,19 @@ fn normalize_for_stats(
     stem_lang: StemLang,
 ) -> Vec<String> {
     let mut out = Vec::with_capacity(tokens.len());
+    let stemmer = make_stemmer(stem_lang);
     for t in tokens {
         let lower = t.to_lowercase();
         if !stopwords.is_empty() && stopwords.contains(&lower) {
             continue;
         }
-        let normalized = if let Some(stemmer) = make_stemmer(stem_lang) {
-            stemmer.stem(&lower).to_string()
+        let normalized = if let Some(stem) = &stemmer {
+            stem.stem(&lower).to_string()
         } else {
             lower
         };
         out.push(normalized);
     }
-    out
-}
-
-/// Build per-file partial counts (map stage) from raw text.
-fn partial_counts_from_text(
-    text: &str,
-    stopwords: &HashSet<String>,
-    opts: &AnalysisOptions,
-) -> PartialCounts {
-    // Language detection (for stemming)
-    let lang_guess = whatlang::detect(text);
-    let stem_lang = match opts.stem_mode {
-        StemMode::Off => StemLang::Unknown,
-        StemMode::Auto => lang_guess
-            .as_ref()
-            .map(|i| StemLang::from_whatlang(i.lang()))
-            .unwrap_or(StemLang::Unknown),
-        StemMode::Force(lang) => lang,
-    };
-
-    // Tokens
-    let original_tokens = tokenize(text);
-    let tokens_for_stats = normalize_for_stats(&original_tokens, stopwords, stem_lang);
-    let n = tokens_for_stats.len();
-
-    // Prepare counts
-    let mut pc = PartialCounts::default();
-    pc.n_tokens = n;
-
-    // n-grams
-    if opts.ngram > 0 && n >= opts.ngram {
-        for i in 0..=n - opts.ngram {
-            let mut buf = String::with_capacity(opts.ngram * 6);
-            for (k, t) in tokens_for_stats[i..i + opts.ngram].iter().enumerate() {
-                if k > 0 {
-                    buf.push(' ');
-                }
-                buf.push_str(t);
-            }
-            *pc.ngrams.entry(buf).or_insert(0) += 1;
-        }
-    }
-
-    // wordfreq
-    for t in &tokens_for_stats {
-        *pc.wordfreq.entry(t.clone()).or_insert(0) += 1;
-    }
-
-    // context & neighbors & PMI pairs
-    let window = opts.context;
-    if window > 0 && n > 0 {
-        for (i, w) in tokens_for_stats.iter().enumerate() {
-            let left = i.saturating_sub(window);
-            let right = (i + window + 1).min(n);
-            for j in left..right {
-                if j == i {
-                    continue;
-                }
-                // distance-agnostic context pairs
-                let key_ctx = (w.clone(), tokens_for_stats[j].clone());
-                *pc.context_pairs.entry(key_ctx).or_insert(0) += 1;
-
-                // PMI pair-by-distance with canonical order (w1 <= w2)
-                let (a, b) = if w <= &tokens_for_stats[j] {
-                    (w.clone(), tokens_for_stats[j].clone())
-                } else {
-                    (tokens_for_stats[j].clone(), w.clone())
-                };
-                let d = (i as isize - j as isize).abs() as usize;
-                *pc.cooc_by_dist.entry((a, b, d)).or_insert(0) += 1;
-            }
-
-            // direct neighbors (±1)
-            if i > 0 {
-                let key_left = (w.clone(), tokens_for_stats[i - 1].clone());
-                *pc.neighbor_pairs.entry(key_left).or_insert(0) += 1;
-            }
-            if i + 1 < n {
-                let key_right = (w.clone(), tokens_for_stats[i + 1].clone());
-                *pc.neighbor_pairs.entry(key_right).or_insert(0) += 1;
-            }
-        }
-    }
-
-    // NER on original tokens (heuristic)
-    let mut ner = HashMap::new();
-    let sentences = split_sentences(text);
-    named_entities_heuristic(&original_tokens, &sentences, &mut ner);
-    pc.named_entities = ner;
-
-    pc
-}
-
-/// Merge another PartialCounts into `into` (reduce stage).
-fn merge_counts(into: &mut PartialCounts, other: PartialCounts) {
-    into.n_tokens += other.n_tokens;
-
-    for (k, v) in other.ngrams {
-        *into.ngrams.entry(k).or_insert(0) += v;
-    }
-    for (k, v) in other.wordfreq {
-        *into.wordfreq.entry(k).or_insert(0) += v;
-    }
-    for (k, v) in other.context_pairs {
-        *into.context_pairs.entry(k).or_insert(0) += v;
-    }
-    for (k, v) in other.neighbor_pairs {
-        *into.neighbor_pairs.entry(k).or_insert(0) += v;
-    }
-    for (k, v) in other.cooc_by_dist {
-        *into.cooc_by_dist.entry(k).or_insert(0) += v;
-    }
-    for (k, v) in other.named_entities {
-        *into.named_entities.entry(k).or_insert(0) += v;
-    }
-}
-
-/// Build a full AnalysisResult from reduced PartialCounts (single global pass).
-fn analysis_from_counts(total: PartialCounts, opts: &AnalysisOptions) -> AnalysisResult {
-    let mut result = AnalysisResult::default();
-
-    // ngrams, wordfreq, named_entities
-    result.ngrams = total.ngrams;
-    result.wordfreq = total.wordfreq;
-    result.named_entities = total.named_entities;
-
-    // context_map: (center, neighbor) -> nested
-    for ((center, neighbor), c) in total.context_pairs {
-        let entry = result
-            .context_map
-            .entry(center)
-            .or_insert_with(HashMap::new);
-        *entry.entry(neighbor).or_insert(0) += c;
-    }
-
-    // direct_neighbors: (center, neighbor) -> nested
-    for ((center, neighbor), c) in total.neighbor_pairs {
-        let entry = result
-            .direct_neighbors
-            .entry(center)
-            .or_insert_with(HashMap::new);
-        *entry.entry(neighbor).or_insert(0) += c;
-    }
-
-    // PMI: compute from total.cooc_by_dist, total.n_tokens, and result.wordfreq
-    result.pmi = pmi_from_global_counts(&total.cooc_by_dist, total.n_tokens, &result.wordfreq);
-
-    result
-}
-
-/// Compute PMI from global pair counts-by-distance and unigram counts.
-fn pmi_from_global_counts(
-    cooc_by_dist: &HashMap<(String, String, usize), usize>,
-    n_tokens: usize,
-    wordfreq: &HashMap<String, usize>,
-) -> Vec<PmiEntry> {
-    if n_tokens == 0 {
-        return Vec::new();
-    }
-    let total = n_tokens as f64;
-
-    let mut out = Vec::with_capacity(cooc_by_dist.len());
-    for ((w1, w2, d), c) in cooc_by_dist {
-        let c1 = *wordfreq.get(w1).unwrap_or(&1) as f64;
-        let c2 = *wordfreq.get(w2).unwrap_or(&1) as f64;
-        let p_xy = (*c as f64) / total;
-        let p_x = c1 / total;
-        let p_y = c2 / total;
-        let pmi = (p_xy / (p_x * p_y)).ln();
-        out.push(PmiEntry {
-            word1: w1.clone(),
-            word2: w2.clone(),
-            distance: *d,
-            count: *c,
-            pmi,
-        });
-    }
-
-    out.sort_by(|a, b| {
-        b.pmi
-            .partial_cmp(&a.pmi)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(b.count.cmp(&a.count))
-    });
     out
 }
 
@@ -654,13 +474,11 @@ fn make_stemmer(lang: StemLang) -> Option<rust_stemmers::Stemmer> {
     Some(Stemmer::create(algo))
 }
 
-/// Count n-grams with minimal allocations
 fn ngrams_count(tokens: &[String], n: usize, out: &mut HashMap<String, usize>) {
     if n == 0 || tokens.len() < n {
         return;
     }
     for i in 0..=tokens.len() - n {
-        // Build the n-gram into a single buffer to avoid repeated concatenations.
         let mut buf = String::with_capacity(n * 6);
         for (k, t) in tokens[i..i + n].iter().enumerate() {
             if k > 0 {
@@ -672,15 +490,12 @@ fn ngrams_count(tokens: &[String], n: usize, out: &mut HashMap<String, usize>) {
     }
 }
 
-/// Count word frequencies
 fn wordfreq_count(tokens: &[String], out: &mut HashMap<String, usize>) {
     for t in tokens {
-        // `entry(t.clone())` only allocates if the key is inserted for the first time.
         *out.entry(t.clone()).or_insert(0) += 1;
     }
 }
 
-/// Build context co-occurrences and direct neighbors
 fn context_and_neighbors(
     tokens: &[String],
     window: usize,
@@ -696,7 +511,6 @@ fn context_and_neighbors(
         let left = i.saturating_sub(window);
         let right = (i + window + 1).min(len);
 
-        // Context map
         let entry = context_map.entry(w.clone()).or_insert_with(HashMap::new);
         for j in left..right {
             if j == i {
@@ -704,7 +518,7 @@ fn context_and_neighbors(
             }
             *entry.entry(tokens[j].clone()).or_insert(0) += 1;
         }
-        // Direct neighbors
+
         let neigh = direct_neighbors
             .entry(w.clone())
             .or_insert_with(HashMap::new);
@@ -717,7 +531,6 @@ fn context_and_neighbors(
     }
 }
 
-/// Apply the capitalization heuristic (see module docs)
 fn named_entities_heuristic(
     original_tokens: &[String],
     _sentence_starts: &[usize],
@@ -730,11 +543,9 @@ fn named_entities_heuristic(
             .map(|c| c.is_uppercase())
             .unwrap_or(false)
         {
-            // Filter acronyms (fully uppercase)
             if tok.chars().all(|c| !c.is_lowercase()) {
                 continue;
             }
-            // Crude sentence-start function-word filter (language-agnostic)
             let lower = tok.to_lowercase();
             if [
                 "the", "a", "an", "der", "die", "das", "ein", "eine", "le", "la", "les", "un",
@@ -749,7 +560,6 @@ fn named_entities_heuristic(
     }
 }
 
-/// Compute PMI (Pointwise Mutual Information) over word pairs within ±window
 fn compute_pmi(
     tokens: &[String],
     window: usize,
@@ -759,10 +569,8 @@ fn compute_pmi(
     if window == 0 || tokens.len() < 2 {
         return;
     }
-
     let total_tokens = tokens.len() as f64;
 
-    // Pair counts by distance
     let mut pair_counts: HashMap<(String, String, usize), usize> = HashMap::new();
     for i in 0..tokens.len() {
         let w1 = &tokens[i];
@@ -783,7 +591,6 @@ fn compute_pmi(
         }
     }
 
-    // PMI values
     out.clear();
     out.reserve(pair_counts.len());
     for ((w1, w2, d), c) in pair_counts {
@@ -792,7 +599,7 @@ fn compute_pmi(
         let p_xy = (c as f64) / total_tokens;
         let p_x = c1 / total_tokens;
         let p_y = c2 / total_tokens;
-        let pmi = (p_xy / (p_x * p_y)).ln(); // natural log
+        let pmi = (p_xy / (p_x * p_y)).ln();
         out.push(PmiEntry {
             word1: w1,
             word2: w2,
@@ -802,7 +609,6 @@ fn compute_pmi(
         });
     }
 
-    // Sort: higher PMI first, then by count
     out.sort_by(|a, b| {
         b.pmi
             .partial_cmp(&a.pmi)
@@ -811,7 +617,168 @@ fn compute_pmi(
     });
 }
 
-/// Write all outputs for a given result
+// ---------- Map-Reduce helpers ----------
+
+fn partial_counts_from_text(
+    text: &str,
+    stopwords: &HashSet<String>,
+    opts: &AnalysisOptions,
+) -> PartialCounts {
+    let stem_lang = match opts.stem_mode {
+        StemMode::Off => StemLang::Unknown,
+        StemMode::Force(lang) => lang,
+        StemMode::Auto => detect(text)
+            .map(|i| StemLang::from_whatlang(i.lang()))
+            .unwrap_or(StemLang::Unknown),
+    };
+
+    let original_tokens = tokenize(text);
+    let tokens_for_stats = normalize_for_stats(&original_tokens, stopwords, stem_lang);
+    let n = tokens_for_stats.len();
+
+    let mut pc = PartialCounts::default();
+    pc.n_tokens = n;
+
+    if opts.ngram > 0 && n >= opts.ngram {
+        for i in 0..=n - opts.ngram {
+            let mut buf = String::with_capacity(opts.ngram * 6);
+            for (k, t) in tokens_for_stats[i..i + opts.ngram].iter().enumerate() {
+                if k > 0 {
+                    buf.push(' ');
+                }
+                buf.push_str(t);
+            }
+            *pc.ngrams.entry(buf).or_insert(0) += 1;
+        }
+    }
+
+    for t in &tokens_for_stats {
+        *pc.wordfreq.entry(t.clone()).or_insert(0) += 1;
+    }
+
+    let window = opts.context;
+    if window > 0 && n > 0 {
+        for (i, w) in tokens_for_stats.iter().enumerate() {
+            let left = i.saturating_sub(window);
+            let right = (i + window + 1).min(n);
+            for j in left..right {
+                if j == i {
+                    continue;
+                }
+                let key_ctx = (w.clone(), tokens_for_stats[j].clone());
+                *pc.context_pairs.entry(key_ctx).or_insert(0) += 1;
+
+                let (a, b) = if w <= &tokens_for_stats[j] {
+                    (w.clone(), tokens_for_stats[j].clone())
+                } else {
+                    (tokens_for_stats[j].clone(), w.clone())
+                };
+                let d = (i as isize - j as isize).abs() as usize;
+                *pc.cooc_by_dist.entry((a, b, d)).or_insert(0) += 1;
+            }
+
+            if i > 0 {
+                let key_left = (w.clone(), tokens_for_stats[i - 1].clone());
+                *pc.neighbor_pairs.entry(key_left).or_insert(0) += 1;
+            }
+            if i + 1 < n {
+                let key_right = (w.clone(), tokens_for_stats[i + 1].clone());
+                *pc.neighbor_pairs.entry(key_right).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut ner = HashMap::new();
+    let sentences = split_sentences(text);
+    named_entities_heuristic(&original_tokens, &sentences, &mut ner);
+    pc.named_entities = ner;
+
+    pc
+}
+
+fn merge_counts(into: &mut PartialCounts, other: PartialCounts) {
+    into.n_tokens += other.n_tokens;
+    for (k, v) in other.ngrams {
+        *into.ngrams.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.wordfreq {
+        *into.wordfreq.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.context_pairs {
+        *into.context_pairs.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.neighbor_pairs {
+        *into.neighbor_pairs.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.cooc_by_dist {
+        *into.cooc_by_dist.entry(k).or_insert(0) += v;
+    }
+    for (k, v) in other.named_entities {
+        *into.named_entities.entry(k).or_insert(0) += v;
+    }
+}
+
+fn analysis_from_counts(total: PartialCounts, _opts: &AnalysisOptions) -> AnalysisResult {
+    let mut result = AnalysisResult::default();
+    result.ngrams = total.ngrams;
+    result.wordfreq = total.wordfreq;
+    result.named_entities = total.named_entities;
+
+    for ((center, neighbor), c) in total.context_pairs {
+        let entry = result
+            .context_map
+            .entry(center)
+            .or_insert_with(HashMap::new);
+        *entry.entry(neighbor).or_insert(0) += c;
+    }
+    for ((center, neighbor), c) in total.neighbor_pairs {
+        let entry = result
+            .direct_neighbors
+            .entry(center)
+            .or_insert_with(HashMap::new);
+        *entry.entry(neighbor).or_insert(0) += c;
+    }
+
+    result.pmi = pmi_from_global_counts(&total.cooc_by_dist, total.n_tokens, &result.wordfreq);
+    result
+}
+
+fn pmi_from_global_counts(
+    cooc_by_dist: &HashMap<(String, String, usize), usize>,
+    n_tokens: usize,
+    wordfreq: &HashMap<String, usize>,
+) -> Vec<PmiEntry> {
+    if n_tokens == 0 {
+        return Vec::new();
+    }
+    let total = n_tokens as f64;
+    let mut out = Vec::with_capacity(cooc_by_dist.len());
+    for ((w1, w2, d), c) in cooc_by_dist {
+        let c1 = *wordfreq.get(w1).unwrap_or(&1) as f64;
+        let c2 = *wordfreq.get(w2).unwrap_or(&1) as f64;
+        let p_xy = (*c as f64) / total;
+        let p_x = c1 / total;
+        let p_y = c2 / total;
+        let pmi = (p_xy / (p_x * p_y)).ln();
+        out.push(PmiEntry {
+            word1: w1.clone(),
+            word2: w2.clone(),
+            distance: *d,
+            count: *c,
+            pmi,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.pmi
+            .partial_cmp(&a.pmi)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.count.cmp(&a.count))
+    });
+    out
+}
+
+// ---------- Output helpers ----------
+
 fn write_all_outputs(
     stem: &str,
     r: &AnalysisResult,
@@ -820,7 +787,6 @@ fn write_all_outputs(
 ) -> Result<(), String> {
     match opts.export_format {
         ExportFormat::Txt => {
-            // Human-readable compact summary
             let mut out = String::new();
             out.push_str(&format!("=== N-grams (N={}) ===\n", opts.ngram));
             for (ng, c) in r.ngrams.iter().take(50) {
@@ -856,7 +822,6 @@ fn write_all_outputs(
     Ok(())
 }
 
-/// Build a short summary for multiple files
 fn summary_for<'a>(pairs: &[(String, &'a AnalysisResult)], _opts: &AnalysisOptions) -> String {
     let mut s = String::new();
     s.push_str("=== Analysis Summary ===\n");
@@ -877,7 +842,14 @@ fn timestamp() -> String {
     Local::now().format("%Y%m%d_%H%M%S").to_string()
 }
 
-// ---------- Export helpers ----------
+fn ext(fmt: ExportFormat) -> &'static str {
+    match fmt {
+        ExportFormat::Txt => "txt",
+        ExportFormat::Csv => "csv",
+        ExportFormat::Tsv => "tsv",
+        ExportFormat::Json => "json",
+    }
+}
 
 fn write_table(
     name: &str,
@@ -992,19 +964,13 @@ fn write_pmi(
     Ok(())
 }
 
-fn ext(fmt: ExportFormat) -> &'static str {
-    match fmt {
-        ExportFormat::Txt => "txt",
-        ExportFormat::Csv => "csv",
-        ExportFormat::Tsv => "tsv",
-        ExportFormat::Json => "json",
-    }
-}
+// ---------- Utilities ----------
 
-fn stem_for(p: &std::path::Path) -> String {
+/// Collision-safe stem: "<stem[.ext]>_<hash8>"
+fn stem_for(p: &Path) -> String {
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
-    let h = short_hash(p); // stable short hash over the full path
+    let h = short_hash(p);
     if ext.is_empty() {
         format!("{stem}_{h}")
     } else {
@@ -1012,11 +978,20 @@ fn stem_for(p: &std::path::Path) -> String {
     }
 }
 
-fn short_hash<P: AsRef<std::path::Path>>(p: P) -> String {
-    // Simple, fast non-cryptographic short hash
+fn short_hash<P: AsRef<Path>>(p: P) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     p.as_ref().to_string_lossy().hash(&mut hasher);
     let v = hasher.finish();
-    // 8 hex chars are enough to disambiguate in practice
     format!("{:08x}", v)
+}
+
+/// Detect a supported stemming language from text; returns None if undetected or unsupported.
+fn detect_supported_stem_lang(text: &str) -> Option<StemLang> {
+    let info = whatlang::detect(text)?;
+    let sl = StemLang::from_whatlang(info.lang());
+    if make_stemmer(sl).is_some() {
+        Some(sl)
+    } else {
+        None
+    }
 }

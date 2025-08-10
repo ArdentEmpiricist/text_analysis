@@ -49,17 +49,21 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     entities_only: bool,
 
-    /// Combine all files into one corpus
+    /// Combine all files into one corpus (Map-Reduce)
     #[arg(long, default_value_t = false)]
     combine: bool,
 
-    /// Enable stemming (language auto-detected)
+    /// Enable stemming (auto-detected language)
     #[arg(long, default_value_t = false)]
     stem: bool,
 
-    /// Force stemming language (e.g., en, de, fr, es, it, pt, nl, ru, sv, fi, no, ro, hu, da, tr)
+    /// Force stemming language (e.g., en, de, fr, es, it, pt, nl, ru, sv, fi, no, ro, hu, da, tr). Takes effect even without --stem.
     #[arg(long)]
     stem_lang: Option<String>,
+
+    /// Require detectable/supported language for auto stemming; otherwise fail/skip
+    #[arg(long, default_value_t = false)]
+    stem_strict: bool,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, ValueEnum)]
@@ -84,18 +88,14 @@ impl From<CliExportFormat> for ExportFormat {
 fn main() {
     let cli = Cli::parse();
 
-    // Determine stemming mode from CLI flags.
-    let stem_mode = if let Some(code) = cli.stem_lang.as_deref() {
-        // Explicit language wins, but only if --stem is set.
-        if cli.stem {
-            StemMode::Force(StemLang::from_code(code).unwrap_or(StemLang::Unknown))
-        } else {
-            StemMode::Off
-        }
-    } else if cli.stem {
-        StemMode::Auto
-    } else {
-        StemMode::Off
+    // Stemming precedence:
+    // 1) --stem-lang LANG forces that language (even without --stem)
+    // 2) Otherwise, --stem enables Auto detection
+    // 3) Otherwise, Off
+    let stem_mode = match (cli.stem, cli.stem_lang.as_deref()) {
+        (_, Some(code)) => StemMode::Force(StemLang::from_code(code).unwrap_or(StemLang::Unknown)),
+        (true, None) => StemMode::Auto,
+        _ => StemMode::Off,
     };
 
     let options = AnalysisOptions {
@@ -105,11 +105,11 @@ fn main() {
         entities_only: cli.entities_only,
         combine: cli.combine,
         stem_mode,
+        stem_require_detected: cli.stem_strict,
     };
 
     match analyze_path(&cli.path, cli.stopwords.as_ref(), &options) {
         Ok(report) => {
-            // Human-readable summary. Detailed data is written to files or stdout depending on format.
             eprintln!("{}", report.summary);
         }
         Err(e) => {
