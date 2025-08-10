@@ -220,8 +220,8 @@ fn main() {
 
 ## Scientific Features & Best Practices
 
-* Language-aware stemming and stopwords for English, German, French, Spanish, Italian, Arabic
-* Optional additional stoplist (e.g. for project-specific terms)
+* Language-aware stemming for English, German, French, Spanish, Italian, Arabic
+* Optional stoplist (e.g. for project-specific terms)
 * N-gram and co-occurrence analysis for computational linguistics or stylometry
 * Collocation statistics with mutual information (PMI)
 * Configurable context window size (±N words)
