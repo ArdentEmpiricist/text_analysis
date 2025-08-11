@@ -1071,20 +1071,58 @@ fn write_pmi(
 
 // ---------- Utilities ----------
 
-/// Build a human-readable summary (top 10 words) for debug/logging.
+/// Build a human-readable summary for debug/logging.
 fn summary_for<'a>(pairs: &[(String, &'a AnalysisResult)], _opts: &AnalysisOptions) -> String {
+    // STDOUT summary is tuned for usefulness:
+    // 1) Top 20 N-grams (sorted by count desc, then key lex asc)
+    // 2) Top 20 PMI pairs (sorted by count desc, then PMI desc, then words lex)
+    // 3) Top 20 words (sorted by count desc, then key lex asc)
+    //
+    // This order surfaces more informative signals before common stopwords.
     let mut s = String::new();
     s.push_str("=== Analysis Summary ===\n");
+
     for (name, r) in pairs {
-        s.push_str(&format!("\n# {name}\n"));
-        s.push_str("Top 10 words:\n");
-        let mut wf: Vec<_> = r.wordfreq.iter().collect();
-        wf.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-        for (w, c) in wf.into_iter().take(10) {
-            s.push_str(&format!("  {w}\t{c}\n"));
+        s.push_str(&format!("\n# {}\n", name));
+
+        // ---- Top 20 N-grams ----
+        s.push_str("Top 20 n-grams:\n");
+        let mut ngram_items: Vec<(&String, &usize)> = r.ngrams.iter().collect();
+        ngram_items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        for (ng, c) in ngram_items.into_iter().take(20) {
+            s.push_str(&format!("  {}\t{}\n", ng, c));
         }
-        s.push('\n');
+
+        // ---- Top 20 PMI ----
+        s.push_str("Top 20 PMI (by count, then PMI):\n");
+        let mut pmi_rows: Vec<&PmiEntry> = r.pmi.iter().collect();
+        pmi_rows.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| {
+                    b.pmi
+                        .partial_cmp(&a.pmi)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.word1.cmp(&b.word1))
+                .then_with(|| a.word2.cmp(&b.word2))
+        });
+        for p in pmi_rows.into_iter().take(20) {
+            s.push_str(&format!(
+                "  ({}, {}) @d={}  count={}  PMI={:.3}\n",
+                p.word1, p.word2, p.distance, p.count, p.pmi
+            ));
+        }
+
+        // ---- Top 20 words ----
+        s.push_str("Top 20 words:\n");
+        let mut wf_items: Vec<(&String, &usize)> = r.wordfreq.iter().collect();
+        wf_items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        for (w, c) in wf_items.into_iter().take(20) {
+            s.push_str(&format!("  {}\t{}\n", w, c));
+        }
     }
+
     s
 }
 

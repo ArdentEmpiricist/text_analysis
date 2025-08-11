@@ -110,11 +110,20 @@ fn main() {
 
     match analyze_path(&cli.path, cli.stopwords.as_ref(), &options) {
         Ok(report) => {
-            eprintln!("{}", report.summary);
+            // Print the tuned STDOUT summary produced by `summary_for(...)`
+            println!("{}", report.summary);
+
+            // Optional: show warnings for files that failed or were skipped
+            if !report.failed_files.is_empty() {
+                eprintln!("Warnings ({} files):", report.failed_files.len());
+                for (file, err) in report.failed_files {
+                    eprintln!("  {} -> {}", file, err);
+                }
+            }
         }
         Err(e) => {
-            eprintln!("Error: {e}");
-            process::exit(1);
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
     }
 }

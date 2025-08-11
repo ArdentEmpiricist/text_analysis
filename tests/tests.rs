@@ -1171,3 +1171,87 @@ fn lib_exports_are_sorted_by_frequency() {
     });
     assert_eq!(pmi_rows, pmi_sorted, "PMI CSV is not sorted as expected");
 }
+
+#[test]
+#[serial]
+fn stdout_summary_order_top20_sections_and_content() {
+    use std::env;
+    use std::path::Path;
+    // Assumes these helpers exist in the test suite:
+    // - write_file(tempdir, name, content)
+    // - opts(ExportFormat)
+    // - analyze_path(dir, stopwords, &opts)
+
+    // 1) Build a tiny corpus with predictable n-grams/PMI/words.
+    // Pattern "alpha beta gamma " repeated yields:
+    //   - frequent bigrams: "alpha beta", "beta gamma", "gamma alpha"
+    //   - similar unigram counts; lexical order should break ties
+    let td = assert_fs::TempDir::new().unwrap();
+    let text = "alpha beta gamma ".repeat(200);
+    let _file = write_file(&td, "s.txt", &text);
+
+    // 2) Options for a deterministic run (per-file, no stopwords, no stemming)
+    let mut o = opts(ExportFormat::Csv);
+    o.combine = false;
+    o.ngram = 2;
+    o.context = 2;
+    o.stem_mode = text_analysis::StemMode::Off;
+    o.stem_require_detected = false;
+
+    // Ensure outputs (if any) end up in the temp dir
+    env::set_current_dir(td.path()).unwrap();
+
+    // 3) Run analysis and inspect the summary string (same as CLI STDOUT)
+    let report = analyze_path(Path::new(td.path()), None, &o).expect("analysis runs");
+    let out = report.summary;
+
+    // --- Section order must be: n-grams -> PMI -> words ---
+    let i_ng = out
+        .find("Top 20 n-grams:")
+        .expect("n-grams section missing");
+    let i_pmi = out
+        .find("Top 20 PMI (by count, then PMI):")
+        .expect("PMI section missing");
+    let i_wf = out.find("Top 20 words:").expect("words section missing");
+    assert!(
+        i_ng < i_pmi && i_pmi < i_wf,
+        "section order must be n-grams -> PMI -> words"
+    );
+
+    // --- N-grams: check expected entries and ordering (count desc, tie lex) ---
+    let i_ng_ab = out
+        .find("\n  alpha beta\t")
+        .expect("missing 'alpha beta' in n-grams");
+    let i_ng_bg = out
+        .find("\n  beta gamma\t")
+        .expect("missing 'beta gamma' in n-grams");
+    let i_ng_ga = out
+        .find("\n  gamma alpha\t")
+        .expect("missing 'gamma alpha' in n-grams");
+    assert!(
+        i_ng_ab < i_ng_bg && i_ng_bg < i_ng_ga,
+        "n-grams not sorted as expected"
+    );
+
+    // --- PMI: most frequent pair (alpha, beta) should appear before (beta, gamma) ---
+    // Format: "  (w1, w2) @d=D  count=C  PMI=V"
+    let i_pmi_ab = out
+        .find("  (alpha, beta) ")
+        .expect("missing (alpha, beta) in PMI");
+    let i_pmi_bg = out
+        .find("  (beta, gamma) ")
+        .expect("missing (beta, gamma) in PMI");
+    assert!(
+        i_pmi_ab < i_pmi_bg,
+        "PMI section not sorted by (count desc, then PMI desc)"
+    );
+
+    // --- Words: with similar counts, lexical order breaks ties ---
+    let i_w_alpha = out.find("\n  alpha\t").expect("missing 'alpha' in words");
+    let i_w_beta = out.find("\n  beta\t").expect("missing 'beta' in words");
+    let i_w_gamma = out.find("\n  gamma\t").expect("missing 'gamma' in words");
+    assert!(
+        i_w_alpha < i_w_beta && i_w_beta < i_w_gamma,
+        "word list not sorted as expected"
+    );
+}
