@@ -629,3 +629,545 @@ fn cli_stem_strict_combined_aborts_on_undetected() {
             .or(predicate::str::contains("strict stemming")),
     );
 }
+
+#[test]
+#[serial]
+fn lib_combine_wordfreq_sums_across_files() {
+    // Prepare two files with known counts:
+    // file1: apple x2, banana x1, orange x1
+    // file2: banana x2, apple x1
+    // combined expected: apple=3, banana=3, orange=1
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f1 = write_file(&td, "a1.txt", "apple apple banana orange");
+    let _f2 = write_file(&td, "a2.txt", "banana banana apple");
+
+    // Combined mode, JSON export
+    let mut o = opts(ExportFormat::Json);
+    o.combine = true;
+    std::env::set_current_dir(td.path()).unwrap();
+    let _ = analyze_path(td.path(), None, &o).expect("combined analysis runs");
+
+    // Load the combined wordfreq JSON (ends with _wordfreq.json)
+    let wf = load_wordfreq_map(td.path());
+
+    assert_eq!(
+        wf.get("apple").copied().unwrap_or(0),
+        3,
+        "apple count should be 3 in combined"
+    );
+    assert_eq!(
+        wf.get("banana").copied().unwrap_or(0),
+        3,
+        "banana count should be 3 in combined"
+    );
+    assert_eq!(
+        wf.get("orange").copied().unwrap_or(0),
+        1,
+        "orange count should be 1 in combined"
+    );
+
+    // Ensure no per-file wordfreq.json outputs exist (only combined_*)
+    let non_combined_exists = std::fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.ends_with("_wordfreq.json"))
+                .unwrap_or(false)
+        })
+        .any(|p| {
+            !p.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("combined_")
+        });
+    assert!(
+        !non_combined_exists,
+        "Expected only combined_*_wordfreq.json outputs in combined mode"
+    );
+}
+
+#[test]
+#[serial]
+fn lib_combine_wordfreq_with_pdf() {
+    // TXT totals (lowercased by analyzer):
+    //  - a1.txt: "Apple and banana. Apple, orange; banana! Apple? Grape grape apple."
+    //      => apple=4, banana=2, orange=1, grape=2, and=1
+    //  - a2.txt: "Banana and apple; banana and pear. Apple banana banana, apple!"
+    //      => banana=4, apple=3, and=2, pear=1
+    //
+    // Base expected (TXT only): apple=7, banana=6, orange=1, grape=2, and=3, pear=1
+    //
+    // PDF adds (valid, parseable): "Banana apple banana grape apple banana orange"
+    //      => banana=3, apple=2, grape=1, orange=1
+    //
+    // Final expected (TXT + PDF): apple=9, banana=9, grape=3, orange=2, and=3, pear=1
+
+    use std::io::Write as _;
+
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f1 = write_file(
+        &td,
+        "a1.txt",
+        "Apple and banana. Apple, orange; banana! Apple? Grape grape apple.",
+    );
+    let _f2 = write_file(
+        &td,
+        "a2.txt",
+        "Banana and apple; banana and pear. Apple banana banana, apple!",
+    );
+
+    // Build a minimal, *valid* PDF (with correct xref offsets) containing the text.
+    fn build_pdf_bytes(text: &str) -> Vec<u8> {
+        fn esc_parens(s: &str) -> String {
+            s.replace('(', r"\(").replace(')', r"\)")
+        }
+        let content = format!("BT\n/F1 12 Tf\n10 100 Td\n({}) Tj\nET\n", esc_parens(text));
+
+        let mut pdf: Vec<u8> = Vec::new();
+        let mut offsets: [usize; 6] = [0; 6];
+
+        // Header
+        pdf.extend_from_slice(b"%PDF-1.4\n");
+
+        // 1 0 obj  (Catalog)
+        offsets[1] = pdf.len();
+        pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+        // 2 0 obj  (Pages)
+        offsets[2] = pdf.len();
+        pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+        // 3 0 obj  (Page)
+        offsets[3] = pdf.len();
+        pdf.extend_from_slice(b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n");
+
+        // 4 0 obj  (Contents stream)
+        let stream_len = content.as_bytes().len();
+        offsets[4] = pdf.len();
+        pdf.extend_from_slice(
+            format!("4 0 obj\n<< /Length {} >>\nstream\n", stream_len).as_bytes(),
+        );
+        pdf.extend_from_slice(content.as_bytes());
+        pdf.extend_from_slice(b"endstream\nendobj\n");
+
+        // 5 0 obj  (Font)
+        offsets[5] = pdf.len();
+        pdf.extend_from_slice(
+            b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        );
+
+        // xref
+        let xref_pos = pdf.len();
+        let mut xref = String::new();
+        xref.push_str("xref\n0 6\n");
+        xref.push_str("0000000000 65535 f \n");
+        for i in 1..=5 {
+            xref.push_str(&format!("{:010} 00000 n \n", offsets[i]));
+        }
+        pdf.extend_from_slice(xref.as_bytes());
+
+        // trailer + startxref
+        let trailer = format!(
+            "trailer << /Size 6 /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            xref_pos
+        );
+        pdf.extend_from_slice(trailer.as_bytes());
+
+        pdf
+    }
+
+    // Write robust PDF with complex text
+    let pdf_path = td.child("doc.pdf");
+    {
+        let bytes = build_pdf_bytes("Banana apple banana grape apple banana orange");
+        let mut f = std::fs::File::create(pdf_path.path()).unwrap();
+        f.write_all(&bytes).unwrap();
+    }
+
+    // Combined mode, JSON export
+    let mut o = opts(ExportFormat::Json);
+    o.combine = true;
+    std::env::set_current_dir(td.path()).unwrap();
+    let rep = analyze_path(td.path(), None, &o).expect("combined analysis runs");
+
+    // Ensure PDF parsed successfully (since we generated a valid one)
+    assert!(
+        !rep.failed_files
+            .iter()
+            .any(|(file, _)| file.ends_with("doc.pdf")),
+        "PDF should be parsed successfully"
+    );
+
+    // Load combined wordfreq and assert sums including PDF
+    let wf = load_wordfreq_map(td.path());
+    assert_eq!(
+        wf.get("apple").copied().unwrap_or(0),
+        9,
+        "apple count should be 9 (7 TXT + 2 PDF)"
+    );
+    assert_eq!(
+        wf.get("banana").copied().unwrap_or(0),
+        9,
+        "banana count should be 9 (6 TXT + 3 PDF)"
+    );
+    assert_eq!(
+        wf.get("grape").copied().unwrap_or(0),
+        3,
+        "grape count should be 3 (2 TXT + 1 PDF)"
+    );
+    assert_eq!(
+        wf.get("orange").copied().unwrap_or(0),
+        2,
+        "orange count should be 2 (1 TXT + 1 PDF)"
+    );
+    assert_eq!(
+        wf.get("and").copied().unwrap_or(0),
+        3,
+        "and count should be 3 (TXT only)"
+    );
+    assert_eq!(
+        wf.get("pear").copied().unwrap_or(0),
+        1,
+        "pear count should be 1 (TXT only)"
+    );
+
+    // Ensure no per-file wordfreq.json exists (only combined_* outputs)
+    let non_combined_exists = std::fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.ends_with("_wordfreq.json"))
+                .unwrap_or(false)
+        })
+        .any(|p| {
+            !p.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("combined_")
+        });
+    assert!(
+        !non_combined_exists,
+        "Expected only combined_*_wordfreq.json outputs in combined mode"
+    );
+}
+
+#[test]
+#[serial]
+fn lib_combine_wordfreq_with_multipage_pdf_and_noise() {
+    // TXT totals (lowercased by analyzer):
+    //  a1.txt: "Apple and banana. Apple, orange; banana! Apple? Grape grape apple."
+    //    => apple=4, banana=2, orange=1, grape=2, and=1
+    //  a2.txt: "Banana and apple; banana and pear. Apple banana banana, apple!"
+    //    => banana=4, apple=3, and=2, pear=1
+    //
+    // Base expected (TXT only):
+    //    apple=7, banana=6, orange=1, grape=2, and=3, pear=1
+    //
+    // Multi-page PDF (3 pages) adds (note: 'orange' is NOT last token now):
+    //  p1: "Banana apple banana grape apple banana orange kiwi"
+    //      => banana=3, apple=2, grape=1, orange=1  (kiwi ignored in asserts)
+    //  p2: "Noise NOISE n123 tokens; apple banana banana pear."
+    //      => apple=1, banana=2, pear=1
+    //  p3: "banana grape grape banana apple."
+    //      => banana=2, grape=2, apple=1
+    //
+    // PDF contribution:
+    //    apple=4, banana=7, grape=3, orange=1, pear=1
+    //
+    // Final expected (TXT + PDF):
+    //    apple=11, banana=13, grape=5, orange=2, and=3, pear=2
+
+    use std::io::Write as _;
+
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f1 = write_file(
+        &td,
+        "a1.txt",
+        "Apple and banana. Apple, orange; banana! Apple? Grape grape apple.",
+    );
+    let _f2 = write_file(
+        &td,
+        "a2.txt",
+        "Banana and apple; banana and pear. Apple banana banana, apple!",
+    );
+
+    fn build_multipage_pdf_bytes(pages: &[&str]) -> Vec<u8> {
+        fn esc_parens(s: &str) -> String {
+            s.replace('(', r"\(").replace(')', r"\)")
+        }
+        let n = pages.len();
+        let font_id = 3 + 2 * n;
+
+        let mut pdf: Vec<u8> = Vec::new();
+        let mut offsets: Vec<usize> = vec![0; font_id as usize + 1]; // 0..=font_id
+
+        pdf.extend_from_slice(b"%PDF-1.4\n");
+        offsets[1] = pdf.len();
+        pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+        offsets[2] = pdf.len();
+        {
+            let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 3 + 2 * i)).collect();
+            let kids_arr = kids.join(" ");
+            let pages_obj = format!(
+                "2 0 obj\n<< /Type /Pages /Kids [ {} ] /Count {} >>\nendobj\n",
+                kids_arr, n
+            );
+            pdf.extend_from_slice(pages_obj.as_bytes());
+        }
+
+        for (i, text) in pages.iter().enumerate() {
+            let page_id = 3 + 2 * i;
+            let cont_id = 4 + 2 * i;
+
+            offsets[page_id as usize] = pdf.len();
+            let page_obj = format!(
+                "{id} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents {cid} 0 R /Resources << /Font << /F1 {fid} 0 R >> >> >>\nendobj\n",
+                id = page_id,
+                cid = cont_id,
+                fid = font_id
+            );
+            pdf.extend_from_slice(page_obj.as_bytes());
+
+            let content = format!("BT\n/F1 12 Tf\n10 200 Td\n({}) Tj\nET\n", esc_parens(text));
+            offsets[cont_id as usize] = pdf.len();
+            pdf.extend_from_slice(
+                format!(
+                    "{cid} 0 obj\n<< /Length {len} >>\nstream\n",
+                    cid = cont_id,
+                    len = content.len()
+                )
+                .as_bytes(),
+            );
+            pdf.extend_from_slice(content.as_bytes());
+            pdf.extend_from_slice(b"endstream\nendobj\n");
+        }
+
+        offsets[font_id as usize] = pdf.len();
+        pdf.extend_from_slice(
+            format!(
+                "{fid} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+                fid = font_id
+            )
+            .as_bytes(),
+        );
+
+        let xref_pos = pdf.len();
+        let mut xref = String::new();
+        xref.push_str(&format!("xref\n0 {}\n", font_id + 1));
+        xref.push_str("0000000000 65535 f \n");
+        for obj in 1..=font_id {
+            xref.push_str(&format!("{:010} 00000 n \n", offsets[obj as usize]));
+        }
+        pdf.extend_from_slice(xref.as_bytes());
+
+        let trailer = format!(
+            "trailer << /Size {size} /Root 1 0 R >>\nstartxref\n{pos}\n%%EOF\n",
+            size = font_id + 1,
+            pos = xref_pos
+        );
+        pdf.extend_from_slice(trailer.as_bytes());
+
+        pdf
+    }
+
+    // Page 1 ends with "kiwi" so "orange" is not the last token in the Tj block
+    let pdf_bytes = build_multipage_pdf_bytes(&[
+        "Banana apple banana grape apple banana orange kiwi",
+        "Noise NOISE n123 tokens; apple banana banana pear.",
+        "banana grape grape banana apple.",
+    ]);
+
+    let pdf_path = td.child("doc_multi.pdf");
+    {
+        let mut f = std::fs::File::create(pdf_path.path()).unwrap();
+        f.write_all(&pdf_bytes).unwrap();
+    }
+
+    let mut o = opts(ExportFormat::Json);
+    o.combine = true;
+    std::env::set_current_dir(td.path()).unwrap();
+    let rep = analyze_path(td.path(), None, &o).expect("combined analysis runs");
+
+    assert!(
+        !rep.failed_files
+            .iter()
+            .any(|(file, _)| file.ends_with("doc_multi.pdf")),
+        "Multi-page PDF should be parsed successfully"
+    );
+
+    let wf = load_wordfreq_map(td.path());
+    assert_eq!(
+        wf.get("apple").copied().unwrap_or(0),
+        11,
+        "apple total mismatch"
+    );
+    assert_eq!(
+        wf.get("banana").copied().unwrap_or(0),
+        13,
+        "banana total mismatch"
+    );
+    assert_eq!(
+        wf.get("grape").copied().unwrap_or(0),
+        5,
+        "grape total mismatch"
+    );
+    assert_eq!(
+        wf.get("orange").copied().unwrap_or(0),
+        2,
+        "orange total mismatch"
+    );
+    assert_eq!(wf.get("and").copied().unwrap_or(0), 3, "and total mismatch");
+    assert_eq!(
+        wf.get("pear").copied().unwrap_or(0),
+        2,
+        "pear total mismatch"
+    );
+
+    let non_combined_exists = std::fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.ends_with("_wordfreq.json"))
+                .unwrap_or(false)
+        })
+        .any(|p| {
+            !p.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("combined_")
+        });
+    assert!(
+        !non_combined_exists,
+        "Expected only combined_*_wordfreq.json outputs in combined mode"
+    );
+}
+
+#[test]
+#[serial]
+fn lib_exports_are_sorted_by_frequency() {
+    use std::fs;
+    use std::io::Read;
+    use std::path::Path;
+
+    // Small corpus with predictable frequencies
+    let td = assert_fs::TempDir::new().unwrap();
+    let _f = write_file(
+        &td,
+        "sorted.txt",
+        // duplicated sequence -> z=10, a=6, b=4, c=2
+        "z z z z z a a a b b c  |  z z z z z a a a b b c",
+    );
+
+    // Run per-file CSV export
+    let mut o = opts(ExportFormat::Csv);
+    o.combine = false;
+    o.ngram = 2;
+    o.context = 2;
+    std::env::set_current_dir(td.path()).unwrap();
+    analyze_path(td.path(), None, &o).expect("analysis runs");
+
+    // Helpers
+    fn find_csv<P: AsRef<Path>>(dir: P, suffix: &str) -> std::path::PathBuf {
+        let mut matches: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map(|x| x == "csv").unwrap_or(false))
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.ends_with(suffix))
+                    .unwrap_or(false)
+            })
+            .collect();
+        matches.sort(); // deterministic pick
+        matches
+            .pop()
+            .expect(&format!("no CSV with suffix {}", suffix))
+    }
+    fn read_csv_lines(p: &Path) -> Vec<String> {
+        let mut s = String::new();
+        std::fs::File::open(p)
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
+        s.lines().map(|ln| ln.to_string()).collect()
+    }
+
+    // ---------- WORD FREQ ----------
+    let wf_csv = find_csv(td.path(), "_wordfreq.csv");
+    let wf_lines = read_csv_lines(&wf_csv);
+    assert!(wf_lines.len() >= 5, "needs header + at least 4 rows");
+    let parse = |row: &str| {
+        let mut it = row.splitn(2, ',');
+        let item = it.next().unwrap().to_string();
+        let cnt: usize = it.next().unwrap().parse().unwrap();
+        (item, cnt)
+    };
+    let wf_rows: Vec<(String, usize)> = wf_lines.iter().skip(1).map(|r| parse(r)).collect();
+
+    // expected: sort by count desc, then item asc
+    let mut wf_sorted = wf_rows.clone();
+    wf_sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    assert_eq!(wf_rows, wf_sorted, "wordfreq CSV is not sorted as expected");
+
+    // sanity: max should be ("z",10)
+    let max = wf_rows.iter().max_by_key(|(_, c)| *c).unwrap();
+    assert_eq!(max, &("z".to_string(), 10));
+
+    // ---------- N-GRAMS (bigrams) ----------
+    let ng_csv = find_csv(td.path(), "_ngrams.csv");
+    let ng_lines = read_csv_lines(&ng_csv);
+    let ng_rows: Vec<(String, usize)> = ng_lines.iter().skip(1).map(|r| parse(r)).collect();
+    let mut ng_sorted = ng_rows.clone();
+    ng_sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    assert_eq!(ng_rows, ng_sorted, "ngrams CSV is not sorted as expected");
+
+    // ---------- PMI ----------
+    let pmi_csv = find_csv(td.path(), "_pmi.csv");
+    let pmi_lines = read_csv_lines(&pmi_csv);
+    // header: word1,word2,distance,count,pmi
+    #[derive(Clone, Debug, PartialEq)]
+    struct Row {
+        w1: String,
+        w2: String,
+        d: usize,
+        c: usize,
+        p: f64,
+    }
+    let parse_pmi = |row: &str| {
+        let cols: Vec<&str> = row.split(',').collect();
+        Row {
+            w1: cols[0].to_string(),
+            w2: cols[1].to_string(),
+            d: cols[2].parse().unwrap(),
+            c: cols[3].parse().unwrap(),
+            p: cols[4].parse().unwrap(),
+        }
+    };
+    let pmi_rows: Vec<Row> = pmi_lines.iter().skip(1).map(|r| parse_pmi(r)).collect();
+    let mut pmi_sorted = pmi_rows.clone();
+    pmi_sorted.sort_by(|a, b| {
+        b.c.cmp(&a.c)
+            .then_with(|| b.p.partial_cmp(&a.p).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.w1.cmp(&b.w1))
+            .then_with(|| a.w2.cmp(&b.w2))
+    });
+    assert_eq!(pmi_rows, pmi_sorted, "PMI CSV is not sorted as expected");
+}

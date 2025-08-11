@@ -1,32 +1,22 @@
 #![forbid(unsafe_code)]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/ArdentEmpiricist/text_analysis/main/assets/text_analysis_logo.png"
-)]
-//! # Text Analysis Library
-//!
-//! Core functions for analyzing `.txt` and `.pdf` documents.
-//!
-//! ## NER Heuristic (documentation)
-//! The Named-Entity recognition uses a **simple capitalization heuristic**:
-//!
-//! 1. Tokenize the **original (non‑stemmed)** text.
-//! 2. A token is counted as a candidate entity if it
-//!    - starts with an uppercase letter (Unicode-aware), and
-//!    - is **not** fully uppercase (to avoid acronyms), and
-//!    - is **not** a common function word at a sentence start (basic list check).
-//! 3. Counts are **case-sensitive** (so "Berlin" ≠ "BERLIN").
-//!
-//! Note: This heuristic is fast and deterministic but will overgenerate in some
-//! cases (e.g., sentence-initial words). For higher quality, apply a custom
-//! post-filter or integrate a proper NER model.
-//!
-//! ## clone() avoidance (key places)
-//! - Use `HashMap::entry` to avoid double lookups and to allocate keys only on insertion.
-//! - For context maps, allocate strings **only on first insertion** (`entry(key.to_owned())`).
-//! - Serialization writes directly to files to avoid unnecessary intermediate allocations.
-//!
-//! ## No double scanning of files
-//! `analyze_path` collects files once and then processes either combined or per-file.
+#![doc = r#"
+Text Analysis Library
+
+This crate provides a fast, pragmatic toolkit for linguistic text analysis over `.txt` and `.pdf`
+files. It supports:
+
+- Tokenization (Unicode-aware, simple alphanumeric rules)
+- Optional stopword filtering (user-supplied list)
+- Optional stemming (auto-detected or forced language)
+- N-gram counting
+- Word frequency counting
+- Context statistics (±N window) and direct neighbors (±1)
+- PMI (Pointwise Mutual Information) collocations
+- Simple Named-Entity extraction (capitalization heuristic)
+- Parallel per-file analysis (compute) with serialized writes
+- Combined (Map-Reduce) mode that aggregates counts across files
+- **Deterministic, sorted outputs** in CSV/TSV/JSON/TXT
+"#]
 
 use chrono::Local;
 use rayon::prelude::*;
@@ -37,10 +27,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use whatlang::{Lang, detect};
 
+// PDF parsing is always enabled (no feature flag)
 use pdf_extract::extract_text;
+
+// JSON writer for exports
 use serde_json;
 
-/// Export format
+// ---------- Public API types ----------
+
+/// Export format for analysis outputs.
 #[derive(Copy, Clone, Debug)]
 pub enum ExportFormat {
     Txt,
@@ -49,15 +44,18 @@ pub enum ExportFormat {
     Json,
 }
 
-/// Stemming control
+/// Stemming behavior selector.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum StemMode {
+    /// No stemming.
     Off,
+    /// Detect language automatically via `whatlang` and stem when supported.
     Auto,
+    /// Force a specific stemming language.
     Force(StemLang),
 }
 
-/// Supported stemming languages (subset of `rust-stemmers` algorithms)
+/// Supported stemming languages (subset of `rust-stemmers`).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum StemLang {
     Unknown,
@@ -79,6 +77,7 @@ pub enum StemLang {
 }
 
 impl StemLang {
+    /// Map a short CLI code (e.g., "en", "de") to `StemLang`.
     pub fn from_code(code: &str) -> Option<Self> {
         use StemLang::*;
         let c = code.to_ascii_lowercase();
@@ -101,6 +100,7 @@ impl StemLang {
             _ => return None,
         })
     }
+    /// Map a `whatlang::Lang` to `StemLang`. Unknown mappings become `Unknown`.
     pub fn from_whatlang(lang: Lang) -> Self {
         // Use ISO-639-3 codes to be robust across whatlang versions
         match lang.code() {
@@ -124,28 +124,37 @@ impl StemLang {
     }
 }
 
-/// Analysis options
+/// Parameters controlling analysis and export behavior.
 #[derive(Clone, Debug)]
 pub struct AnalysisOptions {
+    /// N-gram size (>=1 recommended; 2 = bigrams).
     pub ngram: usize,
+    /// Context window (±N) for context statistics and PMI.
     pub context: usize,
+    /// Export format for files (TXT/CSV/TSV/JSON).
     pub export_format: ExportFormat,
+    /// If true, export only Named Entities (skips other tables).
     pub entities_only: bool,
+    /// If true, aggregate all files into one corpus (Map-Reduce). Otherwise per-file outputs.
     pub combine: bool,
+    /// Stemming mode (off/auto/force).
     pub stem_mode: StemMode,
-    /// If true and StemMode::Auto, require detectable/supported language
-    /// or treat file as failed (per-file) / fail the run (combined).
+    /// If true and `stem_mode == Auto`, require detectable & supported language; otherwise fail.
+    /// - Per-file: file is skipped and reported in `failed_files`, run continues (success).
+    /// - Combined: the whole run aborts with an error to avoid mixed stemming.
     pub stem_require_detected: bool,
 }
 
-/// Compact analysis report
+/// Summary of a completed run.
 #[derive(Debug)]
 pub struct AnalysisReport {
+    /// Human-readable summary (top words per output).
     pub summary: String,
-    pub failed_files: Vec<(String, String)>, // (file, error)
+    /// (file_path, error) pairs for unreadable or skipped inputs.
+    pub failed_files: Vec<(String, String)>,
 }
 
-/// Detailed analysis result
+/// Full analysis result for a single text/corpus.
 #[derive(Debug, Default)]
 pub struct AnalysisResult {
     pub ngrams: HashMap<String, usize>,
@@ -156,6 +165,7 @@ pub struct AnalysisResult {
     pub pmi: Vec<PmiEntry>,
 }
 
+/// PMI entry for a pair of words at a given distance.
 #[derive(Debug)]
 pub struct PmiEntry {
     pub word1: String,
@@ -165,9 +175,9 @@ pub struct PmiEntry {
     pub pmi: f64,
 }
 
-// ---------- Map-Reduce structures ----------
+// ---------- Map-Reduce internal structures ----------
 
-/// Partial counts for a single file (map stage output).
+/// Partial counts emitted by the *map* stage for a single file.
 #[derive(Default)]
 struct PartialCounts {
     n_tokens: usize,
@@ -179,11 +189,11 @@ struct PartialCounts {
     named_entities: HashMap<String, usize>,
 }
 
-// ---------- Public entry point ----------
+// ---------- High-level entry point ----------
 
-/// Analyze a path (file or directory).
-/// Files are collected once; per-file analysis uses parallel compute + serialized writes.
-/// Combined mode uses Map-Reduce.
+/// Analyze a path (file or directory).  
+/// - Per-file mode: compute in parallel per file; write outputs per file (serialized).  
+/// - Combined mode: Map-Reduce over files; write a single combined set of outputs.
 pub fn analyze_path(
     path: &Path,
     stopwords_file: Option<&PathBuf>,
@@ -198,8 +208,9 @@ pub fn analyze_path(
     let mut failed: Vec<(String, String)> = Vec::new();
     let ts = timestamp();
 
+    // --- Combined Map-Reduce mode ---
     if options.combine {
-        // --- Combined mode via Map-Reduce ---
+        // Map: read + build partial counts in parallel.
         let mapped: Vec<_> = files
             .par_iter()
             .map(|f| match read_text(f) {
@@ -220,6 +231,7 @@ pub fn analyze_path(
             })
             .collect();
 
+        // Reduce: merge partials, collect failures.
         let mut total = PartialCounts::default();
         let mut failed_local: Vec<(String, String)> = Vec::new();
         for item in mapped {
@@ -229,6 +241,7 @@ pub fn analyze_path(
             }
         }
         if options.stem_require_detected && !failed_local.is_empty() {
+            // Fail the combined run to avoid mixed stemming.
             let msg = format!(
                 "Combined run aborted (strict stemming): {} file(s) without detectable/supported language",
                 failed_local.len()
@@ -237,7 +250,8 @@ pub fn analyze_path(
         }
         failed.extend(failed_local);
 
-        let result = analysis_from_counts(total, options);
+        // Finalize: build one `AnalysisResult`, export once.
+        let result = analysis_from_counts(total);
         write_all_outputs("combined", &result, &ts, options)?;
         let summary = summary_for(&[("combined".to_string(), &result)], options);
         return Ok(AnalysisReport {
@@ -276,10 +290,12 @@ pub fn analyze_path(
         }
     }
 
+    // Writes are serialized to reduce I/O contention.
     for (stem, r) in &per_file_results {
         write_all_outputs(stem, r, &ts, options)?;
     }
 
+    // Human-readable summary
     let pairs: Vec<(String, &AnalysisResult)> = per_file_results
         .iter()
         .map(|(n, r)| (n.clone(), r))
@@ -293,7 +309,7 @@ pub fn analyze_path(
 
 // ---------- File discovery ----------
 
-/// Recursively collect .txt/.pdf files
+/// Collect all supported files (.txt, .pdf) recursively from `path`.
 pub fn collect_files(path: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if path.is_file() {
@@ -325,6 +341,7 @@ fn is_supported(p: &Path) -> bool {
 
 // ---------- Reading & preprocessing ----------
 
+/// Read the text from `.txt` or `.pdf`. Returns a displayable error string on failure.
 fn read_text(p: &Path) -> Result<String, String> {
     let ext = p
         .extension()
@@ -338,6 +355,7 @@ fn read_text(p: &Path) -> Result<String, String> {
     }
 }
 
+/// Load stopwords from a text file (one word per line). Empty or unreadable files yield an empty set.
 fn load_stopwords(p: Option<&PathBuf>) -> HashSet<String> {
     let mut set = HashSet::new();
     if let Some(file) = p {
@@ -355,13 +373,14 @@ fn load_stopwords(p: Option<&PathBuf>) -> HashSet<String> {
 
 // ---------- Core analysis (per text) ----------
 
-/// Analyze a text using options (used by per-file pipeline).
+/// Analyze a single text buffer with the given `stopwords` and `options`.
+/// This is the core pipeline used by both per-file and combined modes.
 pub fn analyze_text_with(
     text: &str,
     stopwords: &HashSet<String>,
     opts: &AnalysisOptions,
 ) -> AnalysisResult {
-    // Determine stemming language
+    // Determine stemming language once per text (not per token).
     let stem_lang = match opts.stem_mode {
         StemMode::Off => StemLang::Unknown,
         StemMode::Force(lang) => lang,
@@ -370,7 +389,7 @@ pub fn analyze_text_with(
             .unwrap_or(StemLang::Unknown),
     };
 
-    // Tokenize original and normalized
+    // Tokenize original and normalize for stats.
     let original_tokens = tokenize(text);
     let sentences = split_sentences(text);
     let tokens_for_stats = normalize_for_stats(&original_tokens, stopwords, stem_lang);
@@ -384,7 +403,9 @@ pub fn analyze_text_with(
         &mut result.context_map,
         &mut result.direct_neighbors,
     );
+    // NER is based on original, *non-stemmed*, case-sensitive tokens.
     named_entities_heuristic(&original_tokens, &sentences, &mut result.named_entities);
+    // PMI uses normalized tokens, consistent with other statistics.
     compute_pmi(
         &tokens_for_stats,
         opts.context,
@@ -395,7 +416,7 @@ pub fn analyze_text_with(
     result
 }
 
-/// Simple Unicode-friendly tokenizer
+/// Simple tokenizer: keeps alphanumerics and `'` inside tokens, splits on everything else.
 fn tokenize(text: &str) -> Vec<String> {
     let mut out = Vec::with_capacity(text.len() / 5);
     let mut cur = String::new();
@@ -412,7 +433,7 @@ fn tokenize(text: &str) -> Vec<String> {
     out
 }
 
-/// Rough sentence boundary detection by punctuation (., !, ?)
+/// Sentence boundary detection: record byte offsets after '.', '!' or '?'.
 fn split_sentences(text: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     let mut idx = 0usize;
@@ -426,14 +447,14 @@ fn split_sentences(text: &str) -> Vec<usize> {
     starts
 }
 
-/// Normalization for statistics: lowercasing, stopword filtering, optional stemming
+/// Normalize tokens for statistics: lowercase, optional stopword removal, optional stemming.
 fn normalize_for_stats(
     tokens: &[String],
     stopwords: &HashSet<String>,
     stem_lang: StemLang,
 ) -> Vec<String> {
     let mut out = Vec::with_capacity(tokens.len());
-    let stemmer = make_stemmer(stem_lang);
+    let stemmer = make_stemmer(stem_lang); // create once, reuse
     for t in tokens {
         let lower = t.to_lowercase();
         if !stopwords.is_empty() && stopwords.contains(&lower) {
@@ -449,7 +470,7 @@ fn normalize_for_stats(
     out
 }
 
-/// Stemmer factory (`rust-stemmers`). Returns None if unknown/unsupported.
+/// Construct a `rust-stemmers` instance for the given language. Returns `None` if unsupported.
 fn make_stemmer(lang: StemLang) -> Option<rust_stemmers::Stemmer> {
     use StemLang::*;
     use rust_stemmers::{Algorithm, Stemmer};
@@ -474,6 +495,7 @@ fn make_stemmer(lang: StemLang) -> Option<rust_stemmers::Stemmer> {
     Some(Stemmer::create(algo))
 }
 
+/// Count N-grams of size `n` into `out`.
 fn ngrams_count(tokens: &[String], n: usize, out: &mut HashMap<String, usize>) {
     if n == 0 || tokens.len() < n {
         return;
@@ -490,12 +512,14 @@ fn ngrams_count(tokens: &[String], n: usize, out: &mut HashMap<String, usize>) {
     }
 }
 
+/// Count individual word frequencies.
 fn wordfreq_count(tokens: &[String], out: &mut HashMap<String, usize>) {
     for t in tokens {
         *out.entry(t.clone()).or_insert(0) += 1;
     }
 }
 
+/// Build context (±window) counts and direct (±1) neighbor counts.
 fn context_and_neighbors(
     tokens: &[String],
     window: usize,
@@ -531,6 +555,11 @@ fn context_and_neighbors(
     }
 }
 
+/// Naive Named-Entity heuristic:
+/// - Token must start with an uppercase letter
+/// - Token must not be all uppercase (filters acronyms)
+/// - Filter a small set of very common determiners/articles in multiple languages
+/// Counts are case-sensitive.
 fn named_entities_heuristic(
     original_tokens: &[String],
     _sentence_starts: &[usize],
@@ -560,6 +589,8 @@ fn named_entities_heuristic(
     }
 }
 
+/// Compute PMI (Pointwise Mutual Information) for all pairs within ±`window`.
+/// Pairs are stored canonically (`w1 <= w2`) and include the absolute distance `d`.
 fn compute_pmi(
     tokens: &[String],
     window: usize,
@@ -609,6 +640,7 @@ fn compute_pmi(
         });
     }
 
+    // In-memory order: PMI desc, then count desc for stability.
     out.sort_by(|a, b| {
         b.pmi
             .partial_cmp(&a.pmi)
@@ -619,6 +651,7 @@ fn compute_pmi(
 
 // ---------- Map-Reduce helpers ----------
 
+/// Build partial counts for a single text buffer (map stage).
 fn partial_counts_from_text(
     text: &str,
     stopwords: &HashSet<String>,
@@ -639,6 +672,7 @@ fn partial_counts_from_text(
     let mut pc = PartialCounts::default();
     pc.n_tokens = n;
 
+    // N-grams
     if opts.ngram > 0 && n >= opts.ngram {
         for i in 0..=n - opts.ngram {
             let mut buf = String::with_capacity(opts.ngram * 6);
@@ -652,10 +686,12 @@ fn partial_counts_from_text(
         }
     }
 
+    // Word frequencies
     for t in &tokens_for_stats {
         *pc.wordfreq.entry(t.clone()).or_insert(0) += 1;
     }
 
+    // Context, neighbors, co-occurrence-by-distance for PMI
     let window = opts.context;
     if window > 0 && n > 0 {
         for (i, w) in tokens_for_stats.iter().enumerate() {
@@ -665,9 +701,11 @@ fn partial_counts_from_text(
                 if j == i {
                     continue;
                 }
+                // context
                 let key_ctx = (w.clone(), tokens_for_stats[j].clone());
                 *pc.context_pairs.entry(key_ctx).or_insert(0) += 1;
 
+                // PMI pair with distance
                 let (a, b) = if w <= &tokens_for_stats[j] {
                     (w.clone(), tokens_for_stats[j].clone())
                 } else {
@@ -677,6 +715,7 @@ fn partial_counts_from_text(
                 *pc.cooc_by_dist.entry((a, b, d)).or_insert(0) += 1;
             }
 
+            // direct neighbors (±1)
             if i > 0 {
                 let key_left = (w.clone(), tokens_for_stats[i - 1].clone());
                 *pc.neighbor_pairs.entry(key_left).or_insert(0) += 1;
@@ -688,6 +727,7 @@ fn partial_counts_from_text(
         }
     }
 
+    // NER on original tokens
     let mut ner = HashMap::new();
     let sentences = split_sentences(text);
     named_entities_heuristic(&original_tokens, &sentences, &mut ner);
@@ -696,6 +736,7 @@ fn partial_counts_from_text(
     pc
 }
 
+/// Merge `other` into `into` (reduce stage).
 fn merge_counts(into: &mut PartialCounts, other: PartialCounts) {
     into.n_tokens += other.n_tokens;
     for (k, v) in other.ngrams {
@@ -718,7 +759,8 @@ fn merge_counts(into: &mut PartialCounts, other: PartialCounts) {
     }
 }
 
-fn analysis_from_counts(total: PartialCounts, _opts: &AnalysisOptions) -> AnalysisResult {
+/// Build a full `AnalysisResult` from reduced counts.
+fn analysis_from_counts(total: PartialCounts) -> AnalysisResult {
     let mut result = AnalysisResult::default();
     result.ngrams = total.ngrams;
     result.wordfreq = total.wordfreq;
@@ -743,6 +785,7 @@ fn analysis_from_counts(total: PartialCounts, _opts: &AnalysisOptions) -> Analys
     result
 }
 
+/// Compute PMI from global co-occurrence counts (by distance), total token count and unigram counts.
 fn pmi_from_global_counts(
     cooc_by_dist: &HashMap<(String, String, usize), usize>,
     n_tokens: usize,
@@ -768,6 +811,7 @@ fn pmi_from_global_counts(
             pmi,
         });
     }
+    // In-memory order for PMI results: PMI desc, then count desc.
     out.sort_by(|a, b| {
         b.pmi
             .partial_cmp(&a.pmi)
@@ -777,36 +821,86 @@ fn pmi_from_global_counts(
     out
 }
 
-// ---------- Output helpers ----------
+// ---------- Output helpers (ALL SORTED) ----------
 
+/// Write all outputs for a single result using the configured format.
 fn write_all_outputs(
     stem: &str,
     r: &AnalysisResult,
     ts: &str,
     opts: &AnalysisOptions,
 ) -> Result<(), String> {
+    if opts.entities_only {
+        // Entities-only export path (sorted)
+        match opts.export_format {
+            ExportFormat::Txt => {
+                let mut out = String::new();
+                out.push_str("=== Named Entities ===\n");
+                let mut items: Vec<(&String, &usize)> = r.named_entities.iter().collect();
+                items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+                for (e, c) in items.into_iter().take(2000) {
+                    out.push_str(&format!("{e}\t{c}\n"));
+                }
+                let fname = format!("{stem}_{ts}_entities.txt");
+                fs::write(&fname, out).map_err(|e| format!("Write txt failed: {e}"))?;
+            }
+            ExportFormat::Csv | ExportFormat::Tsv | ExportFormat::Json => {
+                write_table("entities", stem, ts, &r.named_entities, opts)?;
+            }
+        }
+        return Ok(());
+    }
+
     match opts.export_format {
         ExportFormat::Txt => {
+            // Human-readable TXT (sorted sections; top-50 only)
             let mut out = String::new();
+
+            // N-grams
             out.push_str(&format!("=== N-grams (N={}) ===\n", opts.ngram));
-            for (ng, c) in r.ngrams.iter().take(50) {
+            let mut ngram_items: Vec<(&String, &usize)> = r.ngrams.iter().collect();
+            ngram_items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+            for (ng, c) in ngram_items.into_iter().take(50) {
                 out.push_str(&format!("{ng}\t{c}\n"));
             }
+
+            // Word frequencies
             out.push_str("\n=== Word Frequencies ===\n");
-            for (w, c) in r.wordfreq.iter().take(50) {
+            let mut wf_items: Vec<(&String, &usize)> = r.wordfreq.iter().collect();
+            wf_items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+            for (w, c) in wf_items.into_iter().take(50) {
                 out.push_str(&format!("{w}\t{c}\n"));
             }
+
+            // Named Entities
             out.push_str("\n=== Named Entities ===\n");
-            for (e, c) in r.named_entities.iter().take(50) {
+            let mut ne_items: Vec<(&String, &usize)> = r.named_entities.iter().collect();
+            ne_items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+            for (e, c) in ne_items.into_iter().take(50) {
                 out.push_str(&format!("{e}\t{c}\n"));
             }
-            out.push_str("\n=== PMI (top 50) ===\n");
-            for p in r.pmi.iter().take(50) {
+
+            // PMI
+            out.push_str("\n=== PMI (top 50, by count) ===\n");
+            let mut pmi_rows: Vec<&PmiEntry> = r.pmi.iter().collect();
+            pmi_rows.sort_by(|a, b| {
+                b.count
+                    .cmp(&a.count)
+                    .then_with(|| {
+                        b.pmi
+                            .partial_cmp(&a.pmi)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| a.word1.cmp(&b.word1))
+                    .then_with(|| a.word2.cmp(&b.word2))
+            });
+            for p in pmi_rows.into_iter().take(50) {
                 out.push_str(&format!(
                     "({}, {}) @d={}  PMI={:.3}  count={}\n",
                     p.word1, p.word2, p.distance, p.pmi, p.count
                 ));
             }
+
             let fname = format!("{stem}_{ts}_summary.txt");
             fs::write(&fname, out).map_err(|e| format!("Write txt failed: {e}"))?;
         }
@@ -822,35 +916,7 @@ fn write_all_outputs(
     Ok(())
 }
 
-fn summary_for<'a>(pairs: &[(String, &'a AnalysisResult)], _opts: &AnalysisOptions) -> String {
-    let mut s = String::new();
-    s.push_str("=== Analysis Summary ===\n");
-    for (name, r) in pairs {
-        s.push_str(&format!("\n# {name}\n"));
-        s.push_str("Top 10 words:\n");
-        let mut wf: Vec<_> = r.wordfreq.iter().collect();
-        wf.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
-        for (w, c) in wf.into_iter().take(10) {
-            s.push_str(&format!("  {w}\t{c}\n"));
-        }
-        s.push('\n');
-    }
-    s
-}
-
-fn timestamp() -> String {
-    Local::now().format("%Y%m%d_%H%M%S").to_string()
-}
-
-fn ext(fmt: ExportFormat) -> &'static str {
-    match fmt {
-        ExportFormat::Txt => "txt",
-        ExportFormat::Csv => "csv",
-        ExportFormat::Tsv => "tsv",
-        ExportFormat::Json => "json",
-    }
-}
-
+/// Write a simple map table as CSV/TSV/JSON. Content is **sorted by count desc, key asc**.
 fn write_table(
     name: &str,
     stem: &str,
@@ -859,6 +925,11 @@ fn write_table(
     opts: &AnalysisOptions,
 ) -> Result<(), String> {
     let fname = format!("{stem}_{ts}_{name}.{}", ext(opts.export_format));
+
+    // Sort for deterministic, meaningful outputs
+    let mut items: Vec<(&String, &usize)> = map.iter().collect();
+    items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+
     match opts.export_format {
         ExportFormat::Csv | ExportFormat::Tsv => {
             let sep = if matches!(opts.export_format, ExportFormat::Csv) {
@@ -868,14 +939,14 @@ fn write_table(
             };
             let mut f = fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
             writeln!(f, "item{}count", sep).map_err(|e| e.to_string())?;
-            for (k, v) in map {
+            for (k, v) in items {
                 writeln!(f, "{}{sep}{}", k, v).map_err(|e| e.to_string())?;
             }
         }
         ExportFormat::Json => {
-            let v: Vec<_> = map
+            let v: Vec<_> = items
                 .iter()
-                .map(|(k, v)| serde_json::json!({"item":k,"count":v}))
+                .map(|(k, v)| serde_json::json!({ "item": k, "count": v }))
                 .collect();
             fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
                 .map_err(|e| format!("write {fname}: {e}"))?;
@@ -885,6 +956,7 @@ fn write_table(
     Ok(())
 }
 
+/// Write a nested map `<center -> neighbor -> count>` as a flat table (sorted by count desc).
 fn write_nested(
     name: &str,
     stem: &str,
@@ -893,6 +965,20 @@ fn write_nested(
     opts: &AnalysisOptions,
 ) -> Result<(), String> {
     let fname = format!("{stem}_{ts}_{name}.{}", ext(opts.export_format));
+
+    // Flatten + stable sort by count desc, then keys
+    let mut rows: Vec<(&String, &String, &usize)> = Vec::new();
+    for (k, inner) in map {
+        for (k2, v) in inner {
+            rows.push((k, k2, v));
+        }
+    }
+    rows.sort_by(|a, b| {
+        b.2.cmp(a.2)
+            .then_with(|| a.0.cmp(b.0))
+            .then_with(|| a.1.cmp(b.1))
+    });
+
     match opts.export_format {
         ExportFormat::Csv | ExportFormat::Tsv => {
             let sep = if matches!(opts.export_format, ExportFormat::Csv) {
@@ -902,20 +988,16 @@ fn write_nested(
             };
             let mut f = fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
             writeln!(f, "item1{}item2{}count", sep, sep).map_err(|e| e.to_string())?;
-            for (k, inner) in map {
-                for (k2, v) in inner {
-                    writeln!(f, "{}{sep}{}{sep}{}", k, k2, v).map_err(|e| e.to_string())?;
-                }
+            for (k, k2, v) in rows {
+                writeln!(f, "{}{sep}{}{sep}{}", k, k2, v).map_err(|e| e.to_string())?;
             }
         }
         ExportFormat::Json => {
-            let mut rows = Vec::new();
-            for (k, inner) in map {
-                for (k2, v) in inner {
-                    rows.push(serde_json::json!({"item1":k,"item2":k2,"count":v}));
-                }
-            }
-            fs::write(&fname, serde_json::to_string_pretty(&rows).unwrap())
+            let v: Vec<_> = rows
+                .iter()
+                .map(|(k, k2, v)| serde_json::json!({ "item1": k, "item2": k2, "count": v }))
+                .collect();
+            fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
                 .map_err(|e| format!("write {fname}: {e}"))?;
         }
         ExportFormat::Txt => unreachable!(),
@@ -923,6 +1005,7 @@ fn write_nested(
     Ok(())
 }
 
+/// Write PMI entries **sorted by count desc, then PMI desc, then words lex**.
 fn write_pmi(
     name: &str,
     stem: &str,
@@ -931,6 +1014,21 @@ fn write_pmi(
     opts: &AnalysisOptions,
 ) -> Result<(), String> {
     let fname = format!("{stem}_{ts}_{name}.{}", ext(opts.export_format));
+
+    // Sort rows for export determinism: count desc, then PMI desc, then lexical
+    let mut rows: Vec<&PmiEntry> = pmi.iter().collect();
+    rows.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| {
+                b.pmi
+                    .partial_cmp(&a.pmi)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.word1.cmp(&b.word1))
+            .then_with(|| a.word2.cmp(&b.word2))
+    });
+
     match opts.export_format {
         ExportFormat::Csv | ExportFormat::Tsv => {
             let sep = if matches!(opts.export_format, ExportFormat::Csv) {
@@ -941,7 +1039,7 @@ fn write_pmi(
             let mut f = fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
             writeln!(f, "word1{}word2{}distance{}count{}pmi", sep, sep, sep, sep)
                 .map_err(|e| e.to_string())?;
-            for row in pmi {
+            for row in rows {
                 writeln!(
                     f,
                     "{}{sep}{}{sep}{}{sep}{}{sep}{:.6}",
@@ -951,11 +1049,18 @@ fn write_pmi(
             }
         }
         ExportFormat::Json => {
-            let v: Vec<_> = pmi.iter().map(|r|
-                serde_json::json!({
-                    "word1":r.word1,"word2":r.word2,"distance":r.distance,"count":r.count,"pmi":r.pmi
+            let v: Vec<_> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "word1": r.word1,
+                        "word2": r.word2,
+                        "distance": r.distance,
+                        "count": r.count,
+                        "pmi": r.pmi
+                    })
                 })
-            ).collect();
+                .collect();
             fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
                 .map_err(|e| format!("write {fname}: {e}"))?;
         }
@@ -966,8 +1071,41 @@ fn write_pmi(
 
 // ---------- Utilities ----------
 
-/// Collision-safe stem: "<stem[.ext]>_<hash8>"
-fn stem_for(p: &Path) -> String {
+/// Build a human-readable summary (top 10 words) for debug/logging.
+fn summary_for<'a>(pairs: &[(String, &'a AnalysisResult)], _opts: &AnalysisOptions) -> String {
+    let mut s = String::new();
+    s.push_str("=== Analysis Summary ===\n");
+    for (name, r) in pairs {
+        s.push_str(&format!("\n# {name}\n"));
+        s.push_str("Top 10 words:\n");
+        let mut wf: Vec<_> = r.wordfreq.iter().collect();
+        wf.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        for (w, c) in wf.into_iter().take(10) {
+            s.push_str(&format!("  {w}\t{c}\n"));
+        }
+        s.push('\n');
+    }
+    s
+}
+
+/// A short timestamp used in output filenames.
+fn timestamp() -> String {
+    Local::now().format("%Y%m%d_%H%M%S").to_string()
+}
+
+/// File extension for an export format.
+fn ext(fmt: ExportFormat) -> &'static str {
+    match fmt {
+        ExportFormat::Txt => "txt",
+        ExportFormat::Csv => "csv",
+        ExportFormat::Tsv => "tsv",
+        ExportFormat::Json => "json",
+    }
+}
+
+/// Collision-safe stem used in output filenames: "<stem[.ext]>_<hash8>".
+/// The hash is a stable hash of the full path to avoid collisions across parallel runs.
+pub fn stem_for(p: &Path) -> String {
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
     let h = short_hash(p);
@@ -985,7 +1123,7 @@ fn short_hash<P: AsRef<Path>>(p: P) -> String {
     format!("{:08x}", v)
 }
 
-/// Detect a supported stemming language from text; returns None if undetected or unsupported.
+/// Detect a supported stemming language. Returns `None` if undetected or unsupported.
 fn detect_supported_stem_lang(text: &str) -> Option<StemLang> {
     let info = whatlang::detect(text)?;
     let sl = StemLang::from_whatlang(info.lang());
