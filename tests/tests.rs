@@ -1255,3 +1255,193 @@ fn stdout_summary_order_top20_sections_and_content() {
         "word list not sorted as expected"
     );
 }
+
+// --- Test 1: Library-level, per-file mode: skip undetected + report warning ---
+#[test]
+#[serial]
+fn lib_stem_strict_per_file_skips_and_reports_v2() {
+    use assert_fs::{TempDir, prelude::*};
+    use std::fs;
+    use std::io::Read;
+    use std::path::Path;
+    use text_analysis::{AnalysisOptions, ExportFormat, StemMode, analyze_path, stem_for};
+
+    // Prepare a temp corpus:
+    // - good.txt: clear English -> detectable and stemmable
+    // - bad.txt: noise/gibberish -> should not be detectable/unsupported for stemming
+    let td = TempDir::new().unwrap();
+    let good = td.child("good.txt");
+    good.write_str("This is a clear English text. Stemming should be possible.")
+        .unwrap();
+    let bad = td.child("bad.txt");
+    bad.write_str("???? #### !!!! 12345 @@@@").unwrap();
+
+    // Build strict auto-stemming options in per-file mode (no combine).
+    let opts = AnalysisOptions {
+        ngram: 2,
+        context: 3,
+        export_format: ExportFormat::Json,
+        entities_only: false,
+        combine: false,
+        stem_mode: StemMode::Auto,
+        stem_require_detected: true, // strict
+    };
+
+    // Write outputs into the temp dir to keep the FS clean.
+    std::env::set_current_dir(td.path()).unwrap();
+
+    // Run analysis (library path). Expect success:
+    let report = analyze_path(Path::new(td.path()), None, &opts)
+        .expect("per-file strict: analysis should succeed");
+
+    // We expect exactly one skipped file (the gibberish one).
+    assert_eq!(
+        report.failed_files.len(),
+        1,
+        "exactly one file should be skipped"
+    );
+    let warned = format!("{}", report.failed_files[0].0);
+    assert!(
+        warned.ends_with("bad.txt"),
+        "skipped file should be bad.txt, got: {warned}"
+    );
+
+    // At least one JSON file should have been produced (for good.txt).
+    let mut json_outputs: Vec<_> = fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
+        .collect();
+    assert!(
+        !json_outputs.is_empty(),
+        "no JSON outputs produced for the good file"
+    );
+
+    // Ensure there is NO output whose stem belongs to bad.txt
+    let bad_stem = stem_for(Path::new(td.path()).join("bad.txt").as_path());
+    for p in &json_outputs {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        assert!(
+            !name.starts_with(&bad_stem),
+            "found an output for bad.txt (should be skipped): {}",
+            name
+        );
+    }
+}
+
+// --- Test 2: CLI-level, combined mode: abort whole run on undetected (strict) ---
+#[test]
+#[serial]
+fn cli_stem_strict_combined_aborts_cleanly_v2() {
+    use assert_cmd::prelude::*;
+    use assert_fs::{TempDir, prelude::*};
+    use predicates::prelude::*;
+    use std::process::Command;
+
+    // Prepare a temp corpus (same idea as above).
+    let td = TempDir::new().unwrap();
+    td.child("ok.txt")
+        .write_str("English content here. This should be detected and stemmed.")
+        .unwrap();
+    td.child("noise.txt")
+        .write_str("@@@@ #### !!!! ???? 12345 ~~~~~")
+        .unwrap();
+
+    // Run CLI with --combine + strict auto-stemming.
+    // Expect a non-zero exit and a helpful error message.
+    let mut cmd = Command::cargo_bin("text_analysis").unwrap();
+    let assert = cmd
+        .current_dir(td.path())
+        .arg(td.path()) // <path>
+        .arg("--combine")
+        .arg("--stem")
+        .arg("--stem-strict")
+        .arg("--export-format")
+        .arg("json")
+        .assert()
+        .failure() // combined strict must abort
+        .stderr(
+            predicate::str::contains("Combined run aborted")
+                .or(predicate::str::contains("Error: Combined run aborted")),
+        );
+
+    // Also ensure that NO result files were created (combined should abort before writing).
+    let any_outputs = std::fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            let p = e.path();
+            let is_result = p
+                .extension()
+                .map(|x| {
+                    let x = x.to_string_lossy();
+                    x == "json" || x == "csv" || x == "tsv" || x == "txt"
+                })
+                .unwrap_or(false);
+            is_result
+                && !p
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .ends_with(".txt") // excludes our input files
+        });
+    assert!(
+        !any_outputs,
+        "no outputs should be written in strict-combined abort"
+    );
+}
+
+// --- Test 3: CLI-level, per-file mode: strict auto-stemming skips undetected + warns ---
+#[test]
+#[serial]
+fn cli_stem_strict_per_file_skips_and_reports_v2() {
+    use assert_cmd::prelude::*;
+    use assert_fs::{TempDir, prelude::*};
+    use std::process::Command;
+
+    let td = TempDir::new().unwrap();
+    td.child("clear_en.txt")
+        .write_str("This is very clearly English. Stemming should work.")
+        .unwrap();
+    td.child("undetected.txt")
+        .write_str("%%%% ????? 00000 +++++ ^^^^^")
+        .unwrap();
+
+    // Run CLI per-file (no --combine) with strict auto-stemming and CSV export
+    let mut cmd = Command::cargo_bin("text_analysis").unwrap();
+    let output = cmd
+        .current_dir(td.path())
+        .arg(td.path())
+        .arg("--stem")
+        .arg("--stem-strict")
+        .arg("--export-format")
+        .arg("csv")
+        .output()
+        .expect("cli should run");
+
+    // Exit code should be success (0) since per-file continues with detectable inputs.
+    assert!(
+        output.status.success(),
+        "per-file strict should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Stderr should report exactly one warning entry for the undetected file.
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        err.contains("Warnings"),
+        "stderr should contain a warnings header"
+    );
+    assert!(
+        err.contains("undetected.txt"),
+        "stderr should reference undetected.txt"
+    );
+
+    // And at least one CSV result should be produced for the detectable file.
+    let any_csv = std::fs::read_dir(td.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.path().extension().map(|x| x == "csv").unwrap_or(false));
+    assert!(any_csv, "expected at least one CSV output");
+}
