@@ -132,7 +132,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-text_analysis = { version = "<latest>" }
+text_analysis = "0.4.6"
 ```
 
 Basic example:
