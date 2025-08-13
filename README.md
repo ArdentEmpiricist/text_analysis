@@ -116,7 +116,7 @@ This surfaces phrases and salient collocations before common function words.
 | `_ngrams.<ext>`          | List of all observed n-grams and their counts                                                | Sorted by count ↓, then lexicographically ↑                                           |
 | `_wordfreq.<ext>`        | Word frequency table (unigrams only)                                                         | Sorted by count ↓, then lexicographically ↑                                           |
 | `_context.<ext>`         | Directed co-occurrence counts for all tokens in a ±N window around each center token         | Window size set by `--context` (default 5); includes all words except the center word |
-| `_neighbors.<ext>`       | Directed co-occurrence counts for immediate left/right neighbors (±1 distance)               | Always exactly one left and one right position per center token if available          |
+| `_neighbors.<ext>`       | Directed co-occurrence counts for immediate left/right neighbors (±1 distance)               | Always exactly one left and one right position per center token          |
 | `_pmi.<ext>`             | Word pairs within the context window with their counts, distances, and Pointwise Mutual Information | Pairs are unordered in storage, sorted by count ↓, PMI ↓ in export                     |
 | `_namedentities.<ext>`   | Named entities detected via capitalization heuristic and their counts                        | Case-sensitive; ignores acronyms and common articles/determiners                      |
 
