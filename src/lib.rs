@@ -537,11 +537,12 @@ fn context_and_neighbors(
         let right = (i + window + 1).min(len);
 
         let entry = context_map.entry(w.clone()).or_default();
-        for j in left..right {
+        for (j_off, neighbor) in tokens[left..right].iter().enumerate() {
+            let j = left + j_off;
             if j == i {
                 continue;
             }
-            *entry.entry(tokens[j].clone()).or_insert(0) += 1;
+            *entry.entry(neighbor.clone()).or_insert(0) += 1;
         }
 
         let neigh = direct_neighbors.entry(w.clone()).or_default();
