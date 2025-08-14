@@ -1459,7 +1459,7 @@ fn csv_writer_sanitizes_and_quotes_correctly() {
         wtr.write_record(["token", "note"]).unwrap();
 
         // dangerous: starts with '=' and contains quotes
-        let dangerous = r#"=HYPERLINK("http://x")"#.to_string();
+        let dangerous = r#"=HYPERLINK("https://x")"#.to_string();
         wtr.write_record([csv_safe_cell(dangerous), "ok".to_string()])
             .unwrap();
 
@@ -1481,7 +1481,7 @@ fn csv_writer_sanitizes_and_quotes_correctly() {
 
     // Inner quotes must be doubled per CSV rules.
     assert!(
-        out.contains(r#"'=HYPERLINK(""http://x"")"#),
+        out.contains(r#"'=HYPERLINK(""https://x"")"#),
         "inner quotes should be escaped (doubled)"
     );
 
