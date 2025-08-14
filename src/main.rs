@@ -18,7 +18,6 @@
 
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
-use std::process;
 
 use text_analysis::{AnalysisOptions, ExportFormat, StemLang, StemMode, analyze_path};
 

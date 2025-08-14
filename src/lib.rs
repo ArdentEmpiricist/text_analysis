@@ -32,17 +32,13 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use whatlang::{Lang, detect};
-
-use csv::WriterBuilder;
 
 // PDF parsing is always enabled (no feature flag)
 use pdf_extract::extract_text;
 
 // JSON writer for exports
-use serde_json;
 
 // ---------- Public API types ----------
 
@@ -226,15 +222,15 @@ pub fn analyze_path(
             .par_iter()
             .map(|f| match read_text(f) {
                 Ok(t) => {
-                    if matches!(options.stem_mode, StemMode::Auto) && options.stem_require_detected
+                    if matches!(options.stem_mode, StemMode::Auto)
+                        && options.stem_require_detected
+                        && detect_supported_stem_lang(&t).is_none()
                     {
-                        if detect_supported_stem_lang(&t).is_none() {
-                            return Err((
-                                f.display().to_string(),
-                                "Language detection failed or unsupported for stemming (strict)"
-                                    .to_string(),
-                            ));
-                        }
+                        return Err((
+                            f.display().to_string(),
+                            "Language detection failed or unsupported for stemming (strict)"
+                                .to_string(),
+                        ));
                     }
                     Ok(partial_counts_from_text(&t, &stopwords, options))
                 }
@@ -276,14 +272,15 @@ pub fn analyze_path(
         .par_iter()
         .map(|f| match read_text(f) {
             Ok(t) => {
-                if matches!(options.stem_mode, StemMode::Auto) && options.stem_require_detected {
-                    if detect_supported_stem_lang(&t).is_none() {
-                        return Err((
-                            f.display().to_string(),
-                            "Language detection failed or unsupported for stemming (strict)"
-                                .to_string(),
-                        ));
-                    }
+                if matches!(options.stem_mode, StemMode::Auto)
+                    && options.stem_require_detected
+                    && detect_supported_stem_lang(&t).is_none()
+                {
+                    return Err((
+                        f.display().to_string(),
+                        "Language detection failed or unsupported for stemming (strict)"
+                            .to_string(),
+                    ));
                 }
                 let r = analyze_text_with(&t, &stopwords, options);
                 let stem = stem_for(f);
@@ -340,14 +337,7 @@ pub fn collect_files(path: &Path) -> Vec<PathBuf> {
 }
 
 fn is_supported(p: &Path) -> bool {
-    match p
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-    {
-        Some(ref e) if e == "txt" || e == "pdf" => true,
-        _ => false,
-    }
+    matches!(p.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()), Some(ref e) if e == "txt" || e == "pdf")
 }
 
 // ---------- Reading & preprocessing ----------
@@ -369,13 +359,13 @@ fn read_text(p: &Path) -> Result<String, String> {
 /// Load stopwords from a text file (one word per line). Empty or unreadable files yield an empty set.
 fn load_stopwords(p: Option<&PathBuf>) -> HashSet<String> {
     let mut set = HashSet::new();
-    if let Some(file) = p {
-        if let Ok(txt) = fs::read_to_string(file) {
-            for line in txt.lines() {
-                let w = line.trim();
-                if !w.is_empty() {
-                    set.insert(w.to_string());
-                }
+    if let Some(file) = p
+        && let Ok(txt) = fs::read_to_string(file)
+    {
+        for line in txt.lines() {
+            let w = line.trim();
+            if !w.is_empty() {
+                set.insert(w.to_string());
             }
         }
     }
@@ -546,7 +536,7 @@ fn context_and_neighbors(
         let left = i.saturating_sub(window);
         let right = (i + window + 1).min(len);
 
-        let entry = context_map.entry(w.clone()).or_insert_with(HashMap::new);
+        let entry = context_map.entry(w.clone()).or_default();
         for j in left..right {
             if j == i {
                 continue;
@@ -554,9 +544,7 @@ fn context_and_neighbors(
             *entry.entry(tokens[j].clone()).or_insert(0) += 1;
         }
 
-        let neigh = direct_neighbors
-            .entry(w.clone())
-            .or_insert_with(HashMap::new);
+        let neigh = direct_neighbors.entry(w.clone()).or_default();
         if i > 0 {
             *neigh.entry(tokens[i - 1].clone()).or_insert(0) += 1;
         }
@@ -623,7 +611,7 @@ fn compute_pmi(
                 continue;
             }
             let w2 = &tokens[j];
-            let d = (i as isize - j as isize).abs() as usize;
+            let d = (i as isize - j as isize).unsigned_abs();
             let key = if w1 <= w2 {
                 (w1.clone(), w2.clone(), d)
             } else {
@@ -722,7 +710,7 @@ fn partial_counts_from_text(
                 } else {
                     (tokens_for_stats[j].clone(), w.clone())
                 };
-                let d = (i as isize - j as isize).abs() as usize;
+                let d = (i as isize - j as isize).unsigned_abs();
                 *pc.cooc_by_dist.entry((a, b, d)).or_insert(0) += 1;
             }
 
@@ -1118,7 +1106,7 @@ fn write_pmi(
 // ---------- Utilities ----------
 
 /// Build a human-readable summary for debug/logging.
-fn summary_for<'a>(pairs: &[(String, &'a AnalysisResult)], _opts: &AnalysisOptions) -> String {
+fn summary_for(pairs: &[(String, &AnalysisResult)], _opts: &AnalysisOptions) -> String {
     // STDOUT summary is tuned for usefulness:
     // 1) Top 20 N-grams (sorted by count desc, then key lex asc)
     // 2) Top 20 PMI pairs (sorted by count desc, then PMI desc, then words lex)
