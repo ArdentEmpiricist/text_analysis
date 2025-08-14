@@ -144,7 +144,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-text_analysis = "0.4.6"
+text_analysis = "0.4.7"
 ```
 
 Basic example:
