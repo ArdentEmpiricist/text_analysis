@@ -770,17 +770,11 @@ fn analysis_from_counts(total: PartialCounts) -> AnalysisResult {
     };
 
     for ((center, neighbor), c) in total.context_pairs {
-        let entry = result
-            .context_map
-            .entry(center)
-            .or_insert_with(HashMap::new);
+        let entry = result.context_map.entry(center).or_default();
         *entry.entry(neighbor).or_insert(0) += c;
     }
     for ((center, neighbor), c) in total.neighbor_pairs {
-        let entry = result
-            .direct_neighbors
-            .entry(center)
-            .or_insert_with(HashMap::new);
+        let entry = result.direct_neighbors.entry(center).or_default();
         *entry.entry(neighbor).or_insert(0) += c;
     }
 

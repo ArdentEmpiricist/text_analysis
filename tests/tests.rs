@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use assert_cmd::prelude::*;
 use assert_fs::prelude::*;
 use csv::WriterBuilder;
 use predicates::prelude::*;
@@ -24,7 +23,7 @@ use tempfile::tempdir;
 
 use text_analysis::{
     AnalysisOptions, ExportFormat, StemLang, StemMode, analyze_path, analyze_text_with,
-    collect_files, csv_safe_cell,
+    csv_safe_cell,
 };
 
 // --------------------- helpers ---------------------
@@ -72,12 +71,11 @@ fn run_cli_fail_in(dir: &std::path::Path, args: &[&str]) -> assert_cmd::assert::
 fn find_json_with_suffix(dir: &Path, suffix: &str) -> PathBuf {
     for entry in fs::read_dir(dir).unwrap().filter_map(|e| e.ok()) {
         let p = entry.path();
-        if p.extension().map(|e| e == "json").unwrap_or(false) {
-            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(suffix) {
-                    return p;
-                }
-            }
+        if p.extension().map(|e| e == "json").unwrap_or(false)
+            && let Some(name) = p.file_name().and_then(|n| n.to_str())
+            && name.ends_with(suffix)
+        {
+            return p;
         }
     }
     panic!("No JSON file found ending with {}", suffix);
@@ -117,16 +115,16 @@ fn lib_tokenize_and_basic_counts() {
     let r = analyze_text_with(text, &stop, &o);
 
     // n-grams present (bigrams)
-    assert!(r.ngrams.get("the quick").is_some());
-    assert!(r.ngrams.get("quick brown").is_some());
+    assert!(r.ngrams.contains_key("the quick"));
+    assert!(r.ngrams.contains_key("quick brown"));
 
     // wordfreq should include tokens lowercased (stemming off)
     assert!(r.wordfreq.get("the").unwrap() >= &2);
     assert!(r.wordfreq.get("quick").unwrap() >= &2);
 
     // neighbors/context present for typical word
-    assert!(r.context_map.get("fox").is_some());
-    assert!(r.direct_neighbors.get("fox").is_some());
+    assert!(r.context_map.contains_key("fox"));
+    assert!(r.direct_neighbors.contains_key("fox"));
 
     // PMI computed
     assert!(!r.pmi.is_empty());
@@ -144,7 +142,7 @@ fn lib_stopwords_filtering() {
     let r = analyze_text_with(text, &stop, &o);
 
     // "and" must be filtered out from statistics
-    assert!(r.wordfreq.get("and").is_none());
+    assert!(!r.wordfreq.contains_key("and"));
     assert!(r.ngrams.keys().all(|ng| !ng.contains("and")));
 }
 
@@ -159,17 +157,17 @@ fn lib_stemming_auto_and_force() {
     o.stem_mode = StemMode::Auto;
     let r_auto = analyze_text_with(text, &stop, &o);
     // English stemming should reduce "running"->"run", "cars"->"car"
-    assert!(r_auto.wordfreq.get("run").is_some());
-    assert!(r_auto.wordfreq.get("car").is_some());
-    assert!(r_auto.wordfreq.get("running").is_none());
-    assert!(r_auto.wordfreq.get("cars").is_none());
+    assert!(r_auto.wordfreq.contains_key("run"));
+    assert!(r_auto.wordfreq.contains_key("car"));
+    assert!(!r_auto.wordfreq.contains_key("running"));
+    assert!(!r_auto.wordfreq.contains_key("cars"));
 
     // Force English
     let mut o2 = opts(ExportFormat::Json);
     o2.stem_mode = StemMode::Force(StemLang::En);
     let r_force = analyze_text_with(text, &stop, &o2);
-    assert!(r_force.wordfreq.get("run").is_some());
-    assert!(r_force.wordfreq.get("car").is_some());
+    assert!(r_force.wordfreq.contains_key("run"));
+    assert!(r_force.wordfreq.contains_key("car"));
 }
 
 #[test]
@@ -182,8 +180,8 @@ fn lib_ngrams_window_and_neighbors() {
 
     let r = analyze_text_with(text, &stop, &o);
     // Trigrams count
-    assert!(r.ngrams.get("alpha beta gamma").is_some());
-    assert!(r.ngrams.get("beta gamma delta").is_some());
+    assert!(r.ngrams.contains_key("alpha beta gamma"));
+    assert!(r.ngrams.contains_key("beta gamma delta"));
 
     // context window ±2: neighbors for "gamma" must include beta and delta
     let neigh = r.direct_neighbors.get("gamma").unwrap();
@@ -193,17 +191,17 @@ fn lib_ngrams_window_and_neighbors() {
 
 #[test]
 fn lib_ner_heuristic() {
-    let mut o = opts(ExportFormat::Json);
+    let o = opts(ExportFormat::Json);
     let text = "Berlin is in Germany. NASA launched a rocket. The dog sleeps.";
     let stop = std::collections::HashSet::new();
     let r = analyze_text_with(text, &stop, &o);
 
     // Should count Berlin and Germany (capitalized), but filter all-upper "NASA"
-    assert!(r.named_entities.get("Berlin").is_some());
-    assert!(r.named_entities.get("Germany").is_some());
-    assert!(r.named_entities.get("NASA").is_none());
+    assert!(r.named_entities.contains_key("Berlin"));
+    assert!(r.named_entities.contains_key("Germany"));
+    assert!(!r.named_entities.contains_key("NASA"));
     // "The" as function word should not be counted
-    assert!(r.named_entities.get("The").is_none());
+    assert!(!r.named_entities.contains_key("The"));
 }
 
 #[test]
@@ -373,21 +371,15 @@ fn cli_stem_auto_detects_language() {
 
     let wf = load_wordfreq_map(td.path());
     // Expect stemmed forms
-    assert!(
-        wf.get("run").is_some(),
-        "Auto stemming should produce 'run'"
-    );
-    assert!(
-        wf.get("car").is_some(),
-        "Auto stemming should produce 'car'"
-    );
+    assert!(wf.contains_key("run"), "Auto stemming should produce 'run'");
+    assert!(wf.contains_key("car"), "Auto stemming should produce 'car'");
     // And raw forms should be absent
     assert!(
-        wf.get("running").is_none(),
+        !wf.contains_key("running"),
         "Auto stemming should remove 'running'"
     );
     assert!(
-        wf.get("cars").is_none(),
+        !wf.contains_key("cars"),
         "Auto stemming should remove 'cars'"
     );
 }
@@ -416,20 +408,20 @@ fn cli_stem_lang_without_stem_flag_forces() {
     let wf = load_wordfreq_map(td.path());
     // Expect raw forms present (no stemming)
     assert!(
-        wf.get("running").is_none(),
+        !wf.contains_key("running"),
         "With forced --stem-lang, 'running' should not remain"
     );
     assert!(
-        wf.get("cars").is_none(),
+        !wf.contains_key("cars"),
         "With forced --stem-lang, 'cars' should not remain"
     );
     // And stemmed forms may be absent
     assert!(
-        wf.get("run").is_some(),
+        wf.contains_key("run"),
         "With forced --stem-lang, 'run' should be produced"
     );
     assert!(
-        wf.get("car").is_some(),
+        wf.contains_key("car"),
         "With forced --stem-lang, 'car' should be produced"
     );
 }
@@ -458,19 +450,19 @@ fn cli_stem_force_language_with_stem() {
     let wf = load_wordfreq_map(td.path());
     // Expect English stemmed forms
     assert!(
-        wf.get("run").is_some(),
+        wf.contains_key("run"),
         "Forced English should produce 'run'"
     );
     assert!(
-        wf.get("car").is_some(),
+        wf.contains_key("car"),
         "Forced English should produce 'car'"
     );
     assert!(
-        wf.get("running").is_none(),
+        !wf.contains_key("running"),
         "Forced English should remove 'running'"
     );
     assert!(
-        wf.get("cars").is_none(),
+        !wf.contains_key("cars"),
         "Forced English should remove 'cars'"
     );
 }
@@ -485,7 +477,7 @@ fn lib_pdf_best_effort_read() {
     let _f = write_file(&td, "doc.txt", "Simple text file to ensure analyzer runs.");
     std::env::set_current_dir(td.path()).unwrap();
 
-    let mut o = opts(ExportFormat::Json);
+    let o = opts(ExportFormat::Json);
     let _ = analyze_path(td.path(), None, &o).expect("analysis runs");
 }
 
@@ -748,7 +740,7 @@ fn lib_combine_wordfreq_with_pdf() {
         pdf.extend_from_slice(b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n");
 
         // 4 0 obj  (Contents stream)
-        let stream_len = content.as_bytes().len();
+        let stream_len = content.len();
         offsets[4] = pdf.len();
         pdf.extend_from_slice(
             format!("4 0 obj\n<< /Length {} >>\nstream\n", stream_len).as_bytes(),
@@ -910,7 +902,7 @@ fn lib_combine_wordfreq_with_multipage_pdf_and_noise() {
         let font_id = 3 + 2 * n;
 
         let mut pdf: Vec<u8> = Vec::new();
-        let mut offsets: Vec<usize> = vec![0; font_id as usize + 1]; // 0..=font_id
+        let mut offsets: Vec<usize> = vec![0; font_id + 1]; // 0..=font_id
 
         pdf.extend_from_slice(b"%PDF-1.4\n");
         offsets[1] = pdf.len();
@@ -931,7 +923,7 @@ fn lib_combine_wordfreq_with_multipage_pdf_and_noise() {
             let page_id = 3 + 2 * i;
             let cont_id = 4 + 2 * i;
 
-            offsets[page_id as usize] = pdf.len();
+            offsets[page_id] = pdf.len();
             let page_obj = format!(
                 "{id} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents {cid} 0 R /Resources << /Font << /F1 {fid} 0 R >> >> >>\nendobj\n",
                 id = page_id,
@@ -941,7 +933,7 @@ fn lib_combine_wordfreq_with_multipage_pdf_and_noise() {
             pdf.extend_from_slice(page_obj.as_bytes());
 
             let content = format!("BT\n/F1 12 Tf\n10 200 Td\n({}) Tj\nET\n", esc_parens(text));
-            offsets[cont_id as usize] = pdf.len();
+            offsets[cont_id] = pdf.len();
             pdf.extend_from_slice(
                 format!(
                     "{cid} 0 obj\n<< /Length {len} >>\nstream\n",
@@ -954,7 +946,7 @@ fn lib_combine_wordfreq_with_multipage_pdf_and_noise() {
             pdf.extend_from_slice(b"endstream\nendobj\n");
         }
 
-        offsets[font_id as usize] = pdf.len();
+        offsets[font_id] = pdf.len();
         pdf.extend_from_slice(
             format!(
                 "{fid} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
@@ -968,7 +960,7 @@ fn lib_combine_wordfreq_with_multipage_pdf_and_noise() {
         xref.push_str(&format!("xref\n0 {}\n", font_id + 1));
         xref.push_str("0000000000 65535 f \n");
         for obj in 1..=font_id {
-            xref.push_str(&format!("{:010} 00000 n \n", offsets[obj as usize]));
+            xref.push_str(&format!("{:010} 00000 n \n", offsets[obj]));
         }
         pdf.extend_from_slice(xref.as_bytes());
 
@@ -1100,7 +1092,7 @@ fn lib_exports_are_sorted_by_frequency() {
         matches.sort(); // deterministic pick
         matches
             .pop()
-            .expect(&format!("no CSV with suffix {}", suffix))
+            .unwrap_or_else(|| panic!("no CSV with suffix {}", suffix))
     }
     fn read_csv_lines(p: &Path) -> Vec<String> {
         let mut s = String::new();
@@ -1263,7 +1255,6 @@ fn stdout_summary_order_top20_sections_and_content() {
 fn lib_stem_strict_per_file_skips_and_reports_v2() {
     use assert_fs::{TempDir, prelude::*};
     use std::fs;
-    use std::io::Read;
     use std::path::Path;
     use text_analysis::{AnalysisOptions, ExportFormat, StemMode, analyze_path, stem_for};
 
@@ -1301,14 +1292,14 @@ fn lib_stem_strict_per_file_skips_and_reports_v2() {
         1,
         "exactly one file should be skipped"
     );
-    let warned = format!("{}", report.failed_files[0].0);
+    let warned = report.failed_files[0].0.to_string();
     assert!(
         warned.ends_with("bad.txt"),
         "skipped file should be bad.txt, got: {warned}"
     );
 
     // At least one JSON file should have been produced (for good.txt).
-    let mut json_outputs: Vec<_> = fs::read_dir(td.path())
+    let json_outputs: Vec<_> = fs::read_dir(td.path())
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -1352,7 +1343,7 @@ fn cli_stem_strict_combined_aborts_cleanly_v2() {
     // Run CLI with --combine + strict auto-stemming.
     // Expect a non-zero exit and a helpful error message.
     let mut cmd = Command::cargo_bin("text_analysis").unwrap();
-    let assert = cmd
+    let _assert = cmd
         .current_dir(td.path())
         .arg(td.path()) // <path>
         .arg("--combine")
