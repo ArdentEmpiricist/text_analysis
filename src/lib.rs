@@ -537,7 +537,7 @@ fn context_and_neighbors(
         let right = (i + window + 1).min(len);
 
         let entry = context_map.entry(w.clone()).or_default();
-        for j in left..right {
+        for (j, <item>) in tokens.iter().enumerate().take(right).skip(left) {
             if j == i {
                 continue;
             }
@@ -558,7 +558,7 @@ fn context_and_neighbors(
 /// - Token must start with an uppercase letter
 /// - Token must not be all uppercase (filters acronyms)
 /// - Filter a small set of very common determiners/articles in multiple languages
-/// Counts are case-sensitive.
+///   Counts are case-sensitive.
 fn named_entities_heuristic(
     original_tokens: &[String],
     _sentence_starts: &[usize],
@@ -668,8 +668,7 @@ fn partial_counts_from_text(
     let tokens_for_stats = normalize_for_stats(&original_tokens, stopwords, stem_lang);
     let n = tokens_for_stats.len();
 
-    let mut pc = PartialCounts::default();
-    pc.n_tokens = n;
+    let mut pc = PartialCounts { n_tokens: n, ..Default::default() };
 
     // N-grams
     if opts.ngram > 0 && n >= opts.ngram {
@@ -760,10 +759,7 @@ fn merge_counts(into: &mut PartialCounts, other: PartialCounts) {
 
 /// Build a full `AnalysisResult` from reduced counts.
 fn analysis_from_counts(total: PartialCounts) -> AnalysisResult {
-    let mut result = AnalysisResult::default();
-    result.ngrams = total.ngrams;
-    result.wordfreq = total.wordfreq;
-    result.named_entities = total.named_entities;
+    let mut result = AnalysisResult { ngrams: total.ngrams, wordfreq: total.wordfreq, named_entities: total.named_entities, ..Default::default() };
 
     for ((center, neighbor), c) in total.context_pairs {
         let entry = result
