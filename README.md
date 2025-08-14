@@ -206,3 +206,14 @@ Uses **pdf-extract**. Files that fail to parse are listed in the warnings and do
 ## License
 
 MIT
+
+
+## Security: CSV/TSV safety
+
+If you open exports in Excel/LibreOffice, cells that begin with `=`, `+`, `-`, or `@` can be interpreted
+as formulas. The recommended approach is:
+
+- Use a proper CSV library (this project uses `csv::Writer`) for escaping.
+- Prefix a `'` for any **text cell** that starts with one of those characters.
+
+This prevents spreadsheet software from executing user-provided content.

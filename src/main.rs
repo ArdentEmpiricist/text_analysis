@@ -12,7 +12,7 @@
 //! - Export to TXT/CSV/TSV/JSON.
 //! - Configurable n‑gram size and ±context window.
 //! - Optional: custom stopword list, stemming (auto via language detection or forced).
-//! - Entities-only export mode.
+//! - CSV/TSV safety: When exporting CSV/TSV, always writes via `csv::Writer` and sanitize any user-derived text cell that starts with `=`, `+`, `-`, or `@` by prefixing `'` to prevent formula execution in spreadsheet apps.
 //!
 //! See README for details.
 

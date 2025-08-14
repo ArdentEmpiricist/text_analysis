@@ -16,6 +16,15 @@ files. It supports:
 - Parallel per-file analysis (compute) with serialized writes
 - Combined (Map-Reduce) mode that aggregates counts across files
 - **Deterministic, sorted outputs** in CSV/TSV/JSON/TXT
+
+
+## Security & CSV/TSV export safety
+
+If you open CSV/TSV in spreadsheet software (Excel/LibreOffice), cells that **start with** one of
+`=`, `+`, `-`, or `@` may be interpreted as formulas (e.g., `=HYPERLINK(...)`). To prevent this, **always:**
+1. Write CSV/TSV using a proper CSV library (this project uses `csv::Writer`) so commas, tabs, quotes, and newlines are escaped correctly.
+2. Sanitize **text cells** by prefixing a single quote when they begin with one of the dangerous characters.
+
 "#]
 
 use chrono::Local;
@@ -26,6 +35,8 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use whatlang::{Lang, detect};
+
+use csv::WriterBuilder;
 
 // PDF parsing is always enabled (no feature flag)
 use pdf_extract::extract_text;
@@ -917,38 +928,49 @@ fn write_all_outputs(
 }
 
 /// Write a simple map table as CSV/TSV/JSON. Content is **sorted by count desc, key asc**.
+/// Write a flat table `<item -> count>` as CSV/TSV/JSON.
+/// CSV/TSV are emitted via `csv::Writer` (proper quoting & newlines),
+/// and **text cells** are sanitized with `csv_safe_cell()` to neutralize
+/// leading `= + - @` (spreadsheet formula injection).
 fn write_table(
     name: &str,
     stem: &str,
     ts: &str,
-    map: &HashMap<String, usize>,
+    map: &std::collections::HashMap<String, usize>,
     opts: &AnalysisOptions,
 ) -> Result<(), String> {
     let fname = format!("{stem}_{ts}_{name}.{}", ext(opts.export_format));
 
-    // Sort for deterministic, meaningful outputs
+    // Deterministic order: count desc, then key asc
     let mut items: Vec<(&String, &usize)> = map.iter().collect();
     items.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
 
     match opts.export_format {
         ExportFormat::Csv | ExportFormat::Tsv => {
-            let sep = if matches!(opts.export_format, ExportFormat::Csv) {
-                ','
+            let delim: u8 = if matches!(opts.export_format, ExportFormat::Csv) {
+                b','
             } else {
-                '\t'
+                b'\t'
             };
-            let mut f = fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
-            writeln!(f, "item{}count", sep).map_err(|e| e.to_string())?;
+            let file = std::fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
+            let mut wtr = csv::WriterBuilder::new().delimiter(delim).from_writer(file);
+
+            // header
+            wtr.write_record(["item", "count"])
+                .map_err(|e| e.to_string())?;
+
             for (k, v) in items {
-                writeln!(f, "{}{sep}{}", k, v).map_err(|e| e.to_string())?;
+                wtr.write_record([csv_safe_cell(k.to_string()), v.to_string()])
+                    .map_err(|e| e.to_string())?;
             }
+            wtr.flush().map_err(|e| e.to_string())?;
         }
         ExportFormat::Json => {
             let v: Vec<_> = items
                 .iter()
                 .map(|(k, v)| serde_json::json!({ "item": k, "count": v }))
                 .collect();
-            fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
+            std::fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
                 .map_err(|e| format!("write {fname}: {e}"))?;
         }
         ExportFormat::Txt => unreachable!(),
@@ -957,16 +979,19 @@ fn write_table(
 }
 
 /// Write a nested map `<center -> neighbor -> count>` as a flat table (sorted by count desc).
+/// Write a nested map `<center -> neighbor -> count>` as a flat table
+/// with columns: `item1, item2, count`.
+/// Uses `csv::Writer` for CSV/TSV and sanitizes text cells with `csv_safe_cell()`.
 fn write_nested(
     name: &str,
     stem: &str,
     ts: &str,
-    map: &HashMap<String, HashMap<String, usize>>,
+    map: &std::collections::HashMap<String, std::collections::HashMap<String, usize>>,
     opts: &AnalysisOptions,
 ) -> Result<(), String> {
     let fname = format!("{stem}_{ts}_{name}.{}", ext(opts.export_format));
 
-    // Flatten + stable sort by count desc, then keys
+    // Flatten + deterministic order: count desc, then keys
     let mut rows: Vec<(&String, &String, &usize)> = Vec::new();
     for (k, inner) in map {
         for (k2, v) in inner {
@@ -981,23 +1006,34 @@ fn write_nested(
 
     match opts.export_format {
         ExportFormat::Csv | ExportFormat::Tsv => {
-            let sep = if matches!(opts.export_format, ExportFormat::Csv) {
-                ','
+            let delim: u8 = if matches!(opts.export_format, ExportFormat::Csv) {
+                b','
             } else {
-                '\t'
+                b'\t'
             };
-            let mut f = fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
-            writeln!(f, "item1{}item2{}count", sep, sep).map_err(|e| e.to_string())?;
+            let file = std::fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
+            let mut wtr = csv::WriterBuilder::new().delimiter(delim).from_writer(file);
+
+            // header
+            wtr.write_record(["item1", "item2", "count"])
+                .map_err(|e| e.to_string())?;
+
             for (k, k2, v) in rows {
-                writeln!(f, "{}{sep}{}{sep}{}", k, k2, v).map_err(|e| e.to_string())?;
+                wtr.write_record([
+                    csv_safe_cell(k.to_string()),
+                    csv_safe_cell(k2.to_string()),
+                    v.to_string(),
+                ])
+                .map_err(|e| e.to_string())?;
             }
+            wtr.flush().map_err(|e| e.to_string())?;
         }
         ExportFormat::Json => {
             let v: Vec<_> = rows
                 .iter()
                 .map(|(k, k2, v)| serde_json::json!({ "item1": k, "item2": k2, "count": v }))
                 .collect();
-            fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
+            std::fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
                 .map_err(|e| format!("write {fname}: {e}"))?;
         }
         ExportFormat::Txt => unreachable!(),
@@ -1006,16 +1042,19 @@ fn write_nested(
 }
 
 /// Write PMI entries **sorted by count desc, then PMI desc, then words lex**.
+/// Write PMI rows with columns: `word1, word2, distance, count, pmi`.
+/// Sorted by `count desc, PMI desc, then words`. CSV/TSV via `csv::Writer`,
+/// **text cells** sanitized via `csv_safe_cell()`.
 fn write_pmi(
     name: &str,
     stem: &str,
     ts: &str,
-    pmi: &[PmiEntry],
+    pmi: &[PmiEntry], // assumes fields: word1, word2, distance, count, pmi
     opts: &AnalysisOptions,
 ) -> Result<(), String> {
     let fname = format!("{stem}_{ts}_{name}.{}", ext(opts.export_format));
 
-    // Sort rows for export determinism: count desc, then PMI desc, then lexical
+    // Deterministic order
     let mut rows: Vec<&PmiEntry> = pmi.iter().collect();
     rows.sort_by(|a, b| {
         b.count
@@ -1031,22 +1070,29 @@ fn write_pmi(
 
     match opts.export_format {
         ExportFormat::Csv | ExportFormat::Tsv => {
-            let sep = if matches!(opts.export_format, ExportFormat::Csv) {
-                ','
+            let delim: u8 = if matches!(opts.export_format, ExportFormat::Csv) {
+                b','
             } else {
-                '\t'
+                b'\t'
             };
-            let mut f = fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
-            writeln!(f, "word1{}word2{}distance{}count{}pmi", sep, sep, sep, sep)
+            let file = std::fs::File::create(&fname).map_err(|e| format!("create {fname}: {e}"))?;
+            let mut wtr = csv::WriterBuilder::new().delimiter(delim).from_writer(file);
+
+            // header
+            wtr.write_record(["word1", "word2", "distance", "count", "pmi"])
                 .map_err(|e| e.to_string())?;
-            for row in rows {
-                writeln!(
-                    f,
-                    "{}{sep}{}{sep}{}{sep}{}{sep}{:.6}",
-                    row.word1, row.word2, row.distance, row.count, row.pmi
-                )
+
+            for r in rows {
+                wtr.write_record([
+                    csv_safe_cell(r.word1.clone()),
+                    csv_safe_cell(r.word2.clone()),
+                    r.distance.to_string(),
+                    r.count.to_string(),
+                    format!("{:.6}", r.pmi),
+                ])
                 .map_err(|e| e.to_string())?;
             }
+            wtr.flush().map_err(|e| e.to_string())?;
         }
         ExportFormat::Json => {
             let v: Vec<_> = rows
@@ -1061,7 +1107,7 @@ fn write_pmi(
                     })
                 })
                 .collect();
-            fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
+            std::fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
                 .map_err(|e| format!("write {fname}: {e}"))?;
         }
         ExportFormat::Txt => unreachable!(),
@@ -1170,4 +1216,11 @@ fn detect_supported_stem_lang(text: &str) -> Option<StemLang> {
     } else {
         None
     }
+}
+
+pub fn csv_safe_cell(mut s: String) -> String {
+    if matches!(s.chars().next(), Some('=' | '+' | '-' | '@')) {
+        s.insert(0, '\'');
+    }
+    s
 }

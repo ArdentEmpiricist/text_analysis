@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::prelude::*;
 use assert_fs::prelude::*;
+use csv::WriterBuilder;
 use predicates::prelude::*;
 use regex::Regex;
 use serde_json::Value as Json;
@@ -23,7 +24,7 @@ use tempfile::tempdir;
 
 use text_analysis::{
     AnalysisOptions, ExportFormat, StemLang, StemMode, analyze_path, analyze_text_with,
-    collect_files,
+    collect_files, csv_safe_cell,
 };
 
 // --------------------- helpers ---------------------
@@ -1444,4 +1445,84 @@ fn cli_stem_strict_per_file_skips_and_reports_v2() {
         .filter_map(|e| e.ok())
         .any(|e| e.path().extension().map(|x| x == "csv").unwrap_or(false));
     assert!(any_csv, "expected at least one CSV output");
+}
+
+// --- Tests to verify sanitizing works ---
+
+#[test]
+fn csv_writer_sanitizes_and_quotes_correctly() {
+    let mut buf = Vec::new();
+    {
+        let mut wtr = WriterBuilder::new().from_writer(&mut buf);
+
+        // header
+        wtr.write_record(["token", "note"]).unwrap();
+
+        // dangerous: starts with '=' and contains quotes
+        let dangerous = r#"=HYPERLINK("http://x")"#.to_string();
+        wtr.write_record([csv_safe_cell(dangerous), "ok".to_string()])
+            .unwrap();
+
+        // also test a newline in a cell
+        let nl = "=BAD\nNEXT".to_string();
+        wtr.write_record([csv_safe_cell(nl), "1".to_string()])
+            .unwrap();
+
+        wtr.flush().unwrap();
+    } // <- drop(wtr), releases &mut borrow on buf
+
+    let out = String::from_utf8(buf).unwrap();
+
+    // Must neutralize leading '=' with a single quote.
+    assert!(
+        out.contains("'=HYPERLINK"),
+        "CSV must prefix '=' at start of cell"
+    );
+
+    // Inner quotes must be doubled per CSV rules.
+    assert!(
+        out.contains(r#"'=HYPERLINK(""http://x"")"#),
+        "inner quotes should be escaped (doubled)"
+    );
+
+    // Newline should still be present in the serialized CSV (inside a quoted field).
+    assert!(
+        out.contains("'=BAD\nNEXT"),
+        "newline preserved in quoted field"
+    );
+}
+
+#[test]
+fn tsv_writer_sanitizes_first_cell_and_uses_tab_delimiter() {
+    let mut buf = Vec::new();
+    {
+        let mut wtr = WriterBuilder::new().delimiter(b'\t').from_writer(&mut buf);
+        wtr.write_record(["token", "n"]).unwrap();
+        wtr.write_record([csv_safe_cell("=X".into()), "1".into()])
+            .unwrap();
+        wtr.flush().unwrap();
+    } // drop writer
+
+    let out = String::from_utf8(buf).unwrap();
+    let mut lines = out.lines();
+    let _ = lines.next(); // header
+    let row = lines.next().unwrap_or("");
+
+    // Row should start with neutralized value, separated by a TAB.
+    assert!(
+        row.starts_with("'=X\t1"),
+        "TSV row must start with \"'=X\\t1\", got: {:?}",
+        row
+    );
+}
+
+#[test]
+fn no_double_prefix_when_cell_already_safe() {
+    let already_safe = "'@SAFE".to_string(); // user already added a leading quote
+    let out = csv_safe_cell(already_safe.clone());
+    assert_eq!(out, already_safe, "must not add a second quote");
+
+    let normal = "normal".to_string();
+    let out2 = csv_safe_cell(normal.clone());
+    assert_eq!(out2, normal, "normal cells should remain unchanged");
 }

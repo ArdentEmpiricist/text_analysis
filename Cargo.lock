@@ -1253,7 +1253,7 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 
 [[package]]
 name = "text_analysis"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "assert_cmd",
  "assert_fs",
