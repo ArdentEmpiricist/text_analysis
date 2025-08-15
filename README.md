@@ -1,8 +1,8 @@
-[![rust-clippy analyze](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/rust-clippy.yml)
-[![Crates.io](https://img.shields.io/crates/v/text_analysis)](https://crates.io/crates/text_analysis)
+[![Crates.io](https://img.shields.io/crates/v/text_analysis?label=Crates.io)](https://crates.io/crates/text_analysis)
+[![rust-clippy analyze](https://img.shields.io/github/actions/workflow/status/ardentempiricist/text_analysis/rust-clippy.yml?label=Rust%20Clippy)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/rust-clippy.yml)
+[![Deploy](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml/badge.svg)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml)
 [![Documentation](https://docs.rs/text_analysis/badge.svg)](https://docs.rs/text_analysis/)
 [![Crates.io](https://img.shields.io/crates/l/text_analysis)](https://github.com/LazyEmpiricist/text_analysis/blob/main/LICENSE)
-[![Deploy](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml/badge.svg)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml)
 [![Crates.io](https://img.shields.io/crates/d/text_analysis?color=darkblue)](https://crates.io/crates/text_analysis)
 
 # text_analysis
@@ -13,7 +13,8 @@
 
 A fast, pragmatic CLI & library for multi-language **text analysis** across `.txt` and `.pdf` files.
 
-**Highlights**
+## Highlights
+
 - Unicode-aware tokenization
 - Optional stopword filtering (custom list)
 - Optional stemming (auto-detected or forced language)
@@ -31,13 +32,15 @@ A fast, pragmatic CLI & library for multi-language **text analysis** across `.tx
 
 ## Installation
 
-* With cargo:
+- With cargo:
 
   ```sh
   cargo install text_analysis
   ```
-* Download binary from [Releases](https://github.com/ArdentEmpiricist/text_analysis/releases)
-* Clone the repository and build from source
+
+- Download binary from [Releases](https://github.com/ArdentEmpiricist/text_analysis/releases)
+
+- Clone the repository and build from source
 
 ---
 
@@ -120,7 +123,6 @@ This surfaces phrases and salient collocations before common function words.
 | `_pmi.<ext>`             | Word pairs within the context window with their counts, distances, and Pointwise Mutual Information | Pairs are unordered in storage, sorted by count ↓, PMI ↓ in export                     |
 | `_namedentities.<ext>`   | Named entities detected via capitalization heuristic and their counts                        | Case-sensitive; ignores acronyms and common articles/determiners                      |
 
-
 Sorting rules applied to **all** tabular exports:
 
 - **N‑grams & Wordfreq**: by **count desc**, then **key asc**.
@@ -130,6 +132,7 @@ Sorting rules applied to **all** tabular exports:
 ### Combined mode
 
 With `--combine`, all inputs are processed as one corpus and exported **once** with stem `"combined"`:
+
 - `combined_<timestamp>_wordfreq.<ext>`, `combined_<timestamp>_ngrams.<ext>`, …
 
 ### File naming
@@ -206,7 +209,6 @@ Uses **pdf-extract**. Files that fail to parse are listed in the warnings and do
 ## License
 
 MIT
-
 
 ## Security: CSV/TSV safety
 
