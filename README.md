@@ -3,7 +3,7 @@
 [![Deploy](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml/badge.svg)](https://github.com/ArdentEmpiricist/text_analysis/actions/workflows/deploy.yml)
 [![Documentation](https://docs.rs/text_analysis/badge.svg)](https://docs.rs/text_analysis/)
 [![Crates.io](https://img.shields.io/crates/l/text_analysis?label=License)](https://github.com/LazyEmpiricist/text_analysis/blob/main/LICENSE)
-[![Crates.io](https://img.shields.io/crates/d/text_analysis?color=darkblue?label=Downloads)](https://crates.io/crates/text_analysis)
+[![Crates.io](https://img.shields.io/crates/d/text_analysis?color=darkblue&label=Downloads)](https://crates.io/crates/text_analysis)
 
 # text_analysis
 
