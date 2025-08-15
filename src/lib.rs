@@ -610,11 +610,11 @@ fn compute_pmi(
         let w1 = &tokens[i];
         let left = i.saturating_sub(window);
         let right = (i + window + 1).min(tokens.len());
-        for j in left..right {
+        for (j_off, w2) in tokens[left..right].iter().enumerate() {
+            let j = left + j_off;
             if j == i {
                 continue;
             }
-            let w2 = &tokens[j];
             let d = (i as isize - j as isize).unsigned_abs();
             let key = if w1 <= w2 {
                 (w1.clone(), w2.clone(), d)
@@ -702,19 +702,20 @@ fn partial_counts_from_text(
         for (i, w) in tokens_for_stats.iter().enumerate() {
             let left = i.saturating_sub(window);
             let right = (i + window + 1).min(n);
-            for j in left..right {
+            for (j_off, neighbor) in tokens_for_stats[left..right].iter().enumerate() {
+                let j = left + j_off;
                 if j == i {
                     continue;
                 }
                 // context
-                let key_ctx = (w.clone(), tokens_for_stats[j].clone());
+                let key_ctx = (w.clone(), neighbor.clone());
                 *pc.context_pairs.entry(key_ctx).or_insert(0) += 1;
 
                 // PMI pair with distance
-                let (a, b) = if w <= &tokens_for_stats[j] {
-                    (w.clone(), tokens_for_stats[j].clone())
+                let (a, b) = if w <= neighbor {
+                    (w.clone(), neighbor.clone())
                 } else {
-                    (tokens_for_stats[j].clone(), w.clone())
+                    (neighbor.clone(), w.clone())
                 };
                 let d = (i as isize - j as isize).unsigned_abs();
                 *pc.cooc_by_dist.entry((a, b, d)).or_insert(0) += 1;

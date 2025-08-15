@@ -759,8 +759,8 @@ fn lib_combine_wordfreq_with_pdf() {
         let mut xref = String::new();
         xref.push_str("xref\n0 6\n");
         xref.push_str("0000000000 65535 f \n");
-        for i in 1..=5 {
-            xref.push_str(&format!("{:010} 00000 n \n", offsets[i]));
+        for offset in offsets.iter().skip(1).take(5) {
+            xref.push_str(&format!("{:010} 00000 n \n", offset));
         }
         pdf.extend_from_slice(xref.as_bytes());
 
@@ -959,8 +959,8 @@ fn lib_combine_wordfreq_with_multipage_pdf_and_noise() {
         let mut xref = String::new();
         xref.push_str(&format!("xref\n0 {}\n", font_id + 1));
         xref.push_str("0000000000 65535 f \n");
-        for obj in 1..=font_id {
-            xref.push_str(&format!("{:010} 00000 n \n", offsets[obj]));
+        for offset in offsets.iter().skip(1).take(font_id) {
+            xref.push_str(&format!("{:010} 00000 n \n", offset));
         }
         pdf.extend_from_slice(xref.as_bytes());
 
