@@ -1,4 +1,7 @@
 #![forbid(unsafe_code)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/ArdentEmpiricist/text_analysis/main/assets/text_analysis_logo.png"
+)]
 #![doc = r#"
 Text Analysis Library
 
