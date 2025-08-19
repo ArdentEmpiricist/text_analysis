@@ -11,7 +11,7 @@
   <img src="https://raw.githubusercontent.com/ArdentEmpiricist/text_analysis/main/assets/text_analysis_logo.png" alt="Text Analysis logo" width="200"/>
 </p>
 
-A fast, pragmatic CLI & library for multi-language **text analysis** across `.txt` and `.pdf` files.
+A fast, pragmatic CLI & library for multi-language **text analysis** across `.txt`, `.pdf`, `.docx`, and `.odt` files.
 
 ## Highlights
 
@@ -57,7 +57,7 @@ text_analysis <path> --export-format csv
 text_analysis <path> --combine --export-format json
 ```
 
-**Path** can be a file or a directory (recursively scanned). Supported: `.txt`, `.pdf`.
+**Path** can be a file or a directory (recursively scanned). Supported: `.txt`, `.pdf`, `.docx`, `.odt`.
 
 ---
 
@@ -197,6 +197,14 @@ Counts are **case‑sensitive** and computed on **original tokens** (not stemmed
 Uses **pdf-extract**. Files that fail to parse are listed in the warnings and don’t abort the run.
 
 ---
+## Office document support
+
+- DOCX: Parsed natively (pure Rust) by reading `word/document.xml` and extracting text content.
+- ODT: Parsed natively (pure Rust) by reading `content.xml` and extracting text content.
+
+Notes:
+- Extraction focuses on plaintext content for analysis; complex formatting, headers/footers, and footnotes may be ignored.
+- Files that fail to parse are listed in the warnings and don't abort the run.
 
 ## Best practices
 

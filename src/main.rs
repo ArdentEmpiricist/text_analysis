@@ -5,7 +5,7 @@
 //! # Text Analysis CLI
 //!
 //! Command-line interface for the `text_analysis` library. Runs n‑gram, context
-//! statistics, named entity extraction and PMI collocations over `.txt` and `.pdf` inputs.
+//! statistics, named entity extraction and PMI collocations over `.txt`, `.pdf`, `.docx`, and `.odt` inputs.
 //!
 //! ## Highlights
 //! - Analyze single files or combine a whole folder (no double scanning of files).
