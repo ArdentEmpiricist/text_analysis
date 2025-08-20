@@ -4,7 +4,7 @@ use std::path::Path;
 use tempfile::tempdir;
 use zip::CompressionMethod;
 use zip::ZipWriter;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 
 // Use the public functions added in src/office.rs
 use text_analysis::{extract_text_from_docx, extract_text_from_odt};
@@ -13,7 +13,7 @@ fn write_minimal_docx(target: &Path, body: &str) {
     // Minimal DOCX: just a ZIP with "word/document.xml"
     let file = File::create(target).expect("create docx file");
     let mut zip = ZipWriter::new(file);
-    let deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // It's fine to skip directory entries, but we include "word/" directory for clarity
     zip.add_directory("word", deflated).expect("add word dir");
@@ -40,7 +40,7 @@ fn write_minimal_odt(target: &Path, body: &str) {
     // Spec requires a "mimetype" first entry stored, but the parser only needs content.xml.
     let file = File::create(target).expect("create odt file");
     let mut zip = ZipWriter::new(file);
-    let deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     let content_xml = format!(
         r##"<?xml version="1.0" encoding="UTF-8"?>
@@ -111,7 +111,7 @@ fn docx_parsing_handles_line_breaks_and_paragraphs() {
     // Build a docx with custom document.xml
     let file = File::create(&path).expect("create docx file");
     let mut zip = ZipWriter::new(file);
-    let deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.add_directory("word", deflated).expect("add word dir");
     zip.start_file("word/document.xml", deflated)
         .expect("start document.xml");
@@ -147,7 +147,7 @@ fn odt_parsing_handles_paragraphs() {
     // Build an odt with custom content.xml
     let file = File::create(&path).expect("create odt file");
     let mut zip = ZipWriter::new(file);
-    let deflated = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.start_file("content.xml", deflated)
         .expect("start content.xml");
     zip.write_all(xml.as_bytes()).expect("write content.xml");
