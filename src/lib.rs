@@ -202,6 +202,10 @@ struct PartialCounts {
     named_entities: HashMap<String, usize>,
 }
 
+// ---------- Public re-exports for Office document extraction ----------
+
+pub use office::{extract_text_from_docx, extract_text_from_odt};
+
 // ---------- High-level entry point ----------
 
 /// Analyze a path (file or directory).  
