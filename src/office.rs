@@ -1,5 +1,5 @@
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -43,12 +43,12 @@ fn parse_docx_xml(xml: &str) -> Result<String, String> {
                 if local_name(e.name().as_ref()) == b"br" {
                     out.push('\n');
                 }
-            },
+            }
             Ok(Event::End(e)) => {
                 if local_name(e.name().as_ref()) == b"p" {
                     out.push('\n');
                 }
-            },
+            }
             Ok(Event::Text(t)) => {
                 out.push_str(&t.unescape().map_err(|e| e.to_string())?);
             }
@@ -73,12 +73,12 @@ fn parse_odt_xml(xml: &str) -> Result<String, String> {
                 if matches!(local_name(e.name().as_ref()), b"line-break" | b"br") {
                     out.push('\n');
                 }
-            },
+            }
             Ok(Event::End(e)) => {
                 if matches!(local_name(e.name().as_ref()), b"p" | b"h") {
                     out.push('\n');
                 }
-            },
+            }
             Ok(Event::Text(t)) => {
                 out.push_str(&t.unescape().map_err(|e| e.to_string())?);
             }
