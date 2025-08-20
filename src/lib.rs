@@ -5,7 +5,7 @@
 #![doc = r#"
 Text Analysis Library
 
-This crate provides a fast, pragmatic toolkit for linguistic text analysis over `.txt` and `.pdf`
+This crate provides a fast, pragmatic toolkit for linguistic text analysis over `.txt`, `.pdf`, `.docx`, and `.odt`
 files. It supports:
 
 - Tokenization (Unicode-aware, simple alphanumeric rules)
@@ -40,6 +40,9 @@ use whatlang::{Lang, detect};
 
 // PDF parsing is always enabled (no feature flag)
 use pdf_extract::extract_text;
+
+// Office document parsing
+mod office;
 
 // JSON writer for exports
 
@@ -211,7 +214,7 @@ pub fn analyze_path(
 ) -> Result<AnalysisReport, String> {
     let files = collect_files(path);
     if files.is_empty() {
-        return Err("No .txt or .pdf files found for analysis.".to_string());
+        return Err("No .txt, .pdf, .docx or .odt files found for analysis.".to_string());
     }
 
     let stopwords = load_stopwords(stopwords_file);
@@ -320,7 +323,7 @@ pub fn analyze_path(
 
 // ---------- File discovery ----------
 
-/// Collect all supported files (.txt, .pdf) recursively from `path`.
+/// Collect all supported files (.txt, .pdf, .docx, .odt) recursively from `path`.
 pub fn collect_files(path: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if path.is_file() {
@@ -340,12 +343,17 @@ pub fn collect_files(path: &Path) -> Vec<PathBuf> {
 }
 
 fn is_supported(p: &Path) -> bool {
-    matches!(p.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()), Some(ref e) if e == "txt" || e == "pdf")
+    matches!(
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase()),
+        Some(ref e) if e == "txt" || e == "pdf" || e == "docx" || e == "odt"
+    )
 }
 
 // ---------- Reading & preprocessing ----------
 
-/// Read the text from `.txt` or `.pdf`. Returns a displayable error string on failure.
+/// Read the text from `.txt`, `.pdf`, `.docx`, or `.odt`. Returns a displayable error string on failure.
 fn read_text(p: &Path) -> Result<String, String> {
     let ext = p
         .extension()
@@ -355,6 +363,8 @@ fn read_text(p: &Path) -> Result<String, String> {
     match ext.as_str() {
         "txt" => fs::read_to_string(p).map_err(|e| format!("Read .txt failed: {e}")),
         "pdf" => extract_text(p).map_err(|e| format!("PDF extract failed: {e}")),
+        "docx" => office::extract_text_from_docx(p),
+        "odt" => office::extract_text_from_odt(p),
         _ => Err("Unsupported extension".to_string()),
     }
 }
