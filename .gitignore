@@ -1,5 +1,7 @@
 /target
-*.txt
-*.pdf
-*.csv
+/*.txt
+/*.pdf
+/*.csv
+/*.tsv
+/*.json
 .DS_Store

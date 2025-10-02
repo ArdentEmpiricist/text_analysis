@@ -1,6 +1,6 @@
 use quick_xml::Reader;
-use quick_xml::events::Event;
 use quick_xml::escape::unescape;
+use quick_xml::events::Event;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;

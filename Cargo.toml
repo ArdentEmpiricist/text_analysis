@@ -1,8 +1,8 @@
 [package]
 name = "text_analysis"
-version = "0.4.8"
+version = "0.4.9"
 authors = [
-    "ArdentEmpiricist <35100899+ArdentrEmpiricist@users.noreply.github.com>",
+    "ArdentEmpiricist <35100899+ArdentEmpiricist@users.noreply.github.com>",
 ]
 edition = "2024"
 description = "A robust multilingual text analysis CLI with context, N-grams, named entities, and CSV/JSON export."
@@ -19,6 +19,11 @@ keywords = [
 ]
 categories = ["command-line-utilities", "parsing", "text-processing", "science"]
 license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+exclude = [
+    "assets/*",
+    ".github/*",
+]
 
 [lib]
 name = "text_analysis"

@@ -975,8 +975,9 @@ fn write_table(
                 .iter()
                 .map(|(k, v)| serde_json::json!({ "item": k, "count": v }))
                 .collect();
-            std::fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
-                .map_err(|e| format!("write {fname}: {e}"))?;
+            let json_str = serde_json::to_string_pretty(&v)
+                .map_err(|e| format!("JSON serialization failed: {e}"))?;
+            std::fs::write(&fname, json_str).map_err(|e| format!("write {fname}: {e}"))?;
         }
         ExportFormat::Txt => unreachable!(),
     }
@@ -1038,8 +1039,9 @@ fn write_nested(
                 .iter()
                 .map(|(k, k2, v)| serde_json::json!({ "item1": k, "item2": k2, "count": v }))
                 .collect();
-            std::fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
-                .map_err(|e| format!("write {fname}: {e}"))?;
+            let json_str = serde_json::to_string_pretty(&v)
+                .map_err(|e| format!("JSON serialization failed: {e}"))?;
+            std::fs::write(&fname, json_str).map_err(|e| format!("write {fname}: {e}"))?;
         }
         ExportFormat::Txt => unreachable!(),
     }
@@ -1112,8 +1114,9 @@ fn write_pmi(
                     })
                 })
                 .collect();
-            std::fs::write(&fname, serde_json::to_string_pretty(&v).unwrap())
-                .map_err(|e| format!("write {fname}: {e}"))?;
+            let json_str = serde_json::to_string_pretty(&v)
+                .map_err(|e| format!("JSON serialization failed: {e}"))?;
+            std::fs::write(&fname, json_str).map_err(|e| format!("write {fname}: {e}"))?;
         }
         ExportFormat::Txt => unreachable!(),
     }
@@ -1192,7 +1195,7 @@ fn ext(fmt: ExportFormat) -> &'static str {
     }
 }
 
-/// Collision-safe stem used in output filenames: "<stem[.ext]>_<hash8>".
+/// Collision-safe stem used in output filenames: `<stem[.ext]>_<hash8>`.
 /// The hash is a stable hash of the full path to avoid collisions across parallel runs.
 pub fn stem_for(p: &Path) -> String {
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
