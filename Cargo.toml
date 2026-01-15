@@ -37,7 +37,7 @@ path = "src/main.rs"
 
 [dependencies]
 whatlang = "0.18.0"
-chrono = "0.4.42"
+chrono = "0.4.43"
 pdf-extract = "0.10.0"
 clap = { version = "4", features = ["derive"] }
 walkdir = "2"
