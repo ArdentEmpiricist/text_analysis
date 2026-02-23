@@ -47,7 +47,7 @@ serde_json = "1.0"
 csv = "1.4.0"
 rayon = "1.11"
 zip = "8.1.0"
-quick-xml = "0.39.1"
+quick-xml = "0.39.2"
 
 
 [dev-dependencies]
